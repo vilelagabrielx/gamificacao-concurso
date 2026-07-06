@@ -1,0 +1,1124 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Concurseiro GO - Gamificação de Estudos</title>
+  <!-- Google Fonts & FontAwesome -->
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+  <div class="app-container">
+    
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="logo">
+        <i class="fa-solid fa-gamepad"></i>
+        <span>Concurseiro<strong>GO</strong></span>
+      </div>
+      <!-- Profile Switcher Panel -->
+      <div class="profile-switcher-panel" id="profile-switcher-panel">
+        <div class="profile-switcher-header" onclick="toggleProfilePanel()">
+          <div id="sidebar-avatar" style="font-size:1.4rem;">👑</div>
+          <div style="flex:1; min-width:0;">
+            <div id="sidebar-profile-name" style="font-weight:700; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Concurseiro</div>
+            <div id="sidebar-exam-name" style="font-size:0.72rem; color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Nenhum concurso configurado</div>
+          </div>
+          <i class="fa-solid fa-chevron-down" id="profile-chevron" style="font-size:0.75rem; color:var(--text-muted); transition:transform 0.3s;"></i>
+        </div>
+        <div id="profile-dropdown" class="hidden" style="margin-top:0.5rem; display:flex; flex-direction:column; gap:0.4rem;">
+          <div id="profiles-list-sidebar" style="display:flex; flex-direction:column; gap:0.3rem; max-height:180px; overflow-y:auto;">
+            <!-- injected -->
+          </div>
+          <button class="btn btn-primary" onclick="openCreateProfileModal()" style="margin-top:0.4rem; padding:0.4rem; font-size:0.8rem; width:100%;">
+            <i class="fa-solid fa-plus"></i> Novo Perfil
+          </button>
+        </div>
+      </div>
+
+      <nav>
+        <ul class="nav-links">
+          <li class="nav-item active" id="nav-dashboard">
+            <a href="#" onclick="showPage('dashboard')">
+              <i class="fa-solid fa-chart-simple"></i>
+              <span>Dashboard</span>
+            </a>
+          </li>
+          <li class="nav-item" id="nav-import">
+            <a href="#" onclick="showPage('import')">
+              <i class="fa-solid fa-cloud-arrow-up"></i>
+              <span>Importar Material</span>
+            </a>
+          </li>
+          <li class="nav-item" id="nav-marathon">
+            <a href="#" onclick="showPage('marathon')">
+              <i class="fa-solid fa-person-running"></i>
+              <span>Maratona 4h <span style="font-size:0.65rem; background: linear-gradient(135deg,#f59e0b,#d97706); color:#000; padding:0.1rem 0.35rem; border-radius:9999px; font-weight:800; vertical-align:middle;">BOSS</span></span>
+            </a>
+          </li>
+          <li class="nav-item" id="nav-shop">
+            <a href="#" onclick="showPage('shop')">
+              <i class="fa-solid fa-store"></i>
+              <span>Loja de Itens</span>
+            </a>
+          </li>
+        </ul>
+      </nav>
+      <div class="sidebar-footer">
+        <p style="font-size: 0.75rem; color: var(--text-muted); text-align: center;">
+          Active Recall & Repetição Espaçada
+        </p>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      
+      <!-- Top Stats Bar -->
+      <header class="top-stats">
+        <div id="season-title-header" class="hidden" style="font-size: 0.95rem; font-weight: 800; color: var(--color-warning); margin-right: auto; padding: 0.4rem 1rem; text-shadow: 0 0 10px rgba(245, 158, 11, 0.35);">
+          Temporada 3: A Caçada de Inverno
+        </div>
+        <div class="stat-badge xp" title="Experiência Acumulada">
+          <i class="fa-solid fa-star"></i>
+          <span id="stat-xp">0</span> XP
+        </div>
+        <div class="stat-badge streak" title="Ofensiva (Dias seguidos de estudo)">
+          <i class="fa-solid fa-fire"></i>
+          <span id="stat-streak">0</span> dias
+        </div>
+        <div class="stat-badge coins" title="Moedas do Concurseiro">
+          <i class="fa-solid fa-coins"></i>
+          <span id="stat-coins">0</span>
+        </div>
+        <div class="stat-badge shield" title="Escudos de Proteção de Ofensiva" onclick="showPage('shop')">
+          <i class="fa-solid fa-shield-halved"></i>
+          <span id="stat-shield">0</span>/3
+        </div>
+        
+        <!-- ADHD Mode Switch -->
+        <button class="btn btn-warning" id="btn-tdah-toggle" onclick="toggleADHDMode()" style="background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.35); padding: 0.4rem 0.8rem; font-size: 0.85rem; font-weight: 700; color: #fbbf24; border-radius: 9999px; cursor: pointer; transition: all 0.3s;" title="Ativa a prótese cognitiva: visual simplificado, combo de dopamina, streak freeze e micro-pausas.">
+          <i class="fa-solid fa-brain"></i> Modo TDAH: OFF
+        </button>
+      </header>
+
+      <!-- PAGE: DASHBOARD -->
+      <section id="page-dashboard" class="spa-page">
+        <div class="dashboard-grid">
+          
+          <!-- Left Column (Profile & Subjects) -->
+          <div class="dashboard-left">
+            
+            <!-- User Info Card -->
+            <div class="glass-card user-hero">
+              <div class="user-avatar" id="avatar-icon">👑</div>
+              <div class="xp-progress-container">
+                <div class="user-info">
+                  <h2 id="user-name">Concurseiro</h2>
+                  <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 0.5rem;">
+                    <span class="user-level-tag" id="user-level">Nível 1</span>
+                    <span id="synergy-buff-badge" class="hidden" style="background: linear-gradient(135deg, #10b981, #059669); color: white; padding: 0.2rem 0.6rem; border-radius: 9999px; font-size: 0.75rem; font-weight: bold; box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);"><i class="fa-solid fa-sparkles"></i> Sinergia 1.2x</span>
+                  </div>
+                </div>
+                <div class="progress-info" style="margin-top: 0.5rem;">
+                  <span>XP do Nível</span>
+                  <span id="xp-ratio">0 / 1000 XP</span>
+                </div>
+                <div class="progress-bar-bg">
+                  <div class="progress-bar-fill" id="xp-progress" style="width: 0%;"></div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- TDAH Center Stage Call-to-Action -->
+            <div class="glass-card hidden" id="tdah-center-stage" style="text-align: center; padding: 2.5rem 1.5rem; margin-top: 1rem; border-color: var(--color-warning);">
+              <h2 style="font-size: 1.6rem; font-weight: 800; margin-bottom: 0.5rem; color: var(--color-warning);">
+                <i class="fa-solid fa-bolt"></i> Córtex Pré-Frontal Pronto!
+              </h2>
+              <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 1.5rem;">
+                Sem paralisia de escolha. Clique abaixo para iniciar sua única tarefa de foco agora.
+              </p>
+              <button class="btn btn-warning" id="btn-tdah-ignition" onclick="playTDAHIgnitionQuestion()" style="font-size: 1.4rem; padding: 1.25rem 3rem; font-weight: 800; text-transform: uppercase; width: 100%; max-width: 320px; box-shadow: 0 0 15px rgba(245, 158, 11, 0.4); cursor: pointer;">
+                <i class="fa-solid fa-play"></i> Jogar 1 Questão
+              </button>
+            </div>
+            
+            <!-- TDAH Visual Garden Card -->
+            <div class="glass-card hidden" id="tdah-garden-card" style="margin-top: 1rem; border-color: #10b981;">
+              <h2 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 0.5rem; color: #10b981;">
+                <i class="fa-solid fa-seedling"></i> Jardim de Evolução Cognitiva
+              </h2>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.25rem;">
+                Cada matéria é uma planta sináptica. Estude para colher frutos; a inatividade trará ervas daninhas.
+              </p>
+              <div id="tdah-garden-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 1rem; text-align: center;">
+                <!-- Plant cards will be dynamically injected here -->
+              </div>
+            </div>
+
+            <!-- Subjects Container -->
+            <div class="glass-card" id="subjects-main-card">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 0.5rem;">
+                <h2 style="font-size: 1.5rem; font-weight: 700;">Minhas Jornadas</h2>
+                <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                  <button class="btn btn-success" onclick="exportLogsCSV()" title="Exportar histórico de estudo para planilha Excel">
+                    <i class="fa-solid fa-file-csv"></i> Exportar Logs
+                  </button>
+                  <button class="btn btn-warning" onclick="startInterleavedSession()" style="box-shadow: 0 0 10px rgba(245, 158, 11, 0.25);" title="Estudo intercalado usando a regra 30% Novas, 50% Spaced Repetition e 20% Bosses">
+                    <i class="fa-solid fa-shuffle"></i> Treino Intercalado (30/50/20)
+                  </button>
+                  <button class="btn btn-primary" onclick="showPage('import')">
+                    <i class="fa-solid fa-plus"></i> Nova Matéria
+                  </button>
+                </div>
+              </div>
+              <div class="subjects-container" id="subjects-list">
+                <!-- Subject cards will be injected here -->
+                <div style="text-align: center; padding: 2rem; color: var(--text-muted);">
+                  <i class="fa-solid fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+                  <p>Carregando suas matérias e calculando maestria...</p>
+                </div>
+              </div>
+            </div>
+            
+          </div>
+
+          <!-- Right Column (AI Mentor & Quests) -->
+          <div class="dashboard-right">
+            
+            <!-- AI Study Diagnosis -->
+            <div class="glass-card">
+              <h2 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 1rem; color: var(--color-primary-hover);">
+                <i class="fa-solid fa-brain"></i> Mentor de IA (Gemini)
+              </h2>
+              <div style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 1rem;" id="ai-mentor-intro">
+                Nesse ponto o sistema está programado pra tratar seus dados com IA.
+              </div>
+              <div class="ai-diagnosis-container" id="ai-mentor-diagnosis">
+                <p style="color: var(--text-muted); font-size: 0.95rem;">Gere seu plano de estudos baseado em neurociência.</p>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem;" id="ai-mentor-actions">
+                <button class="btn btn-primary" onclick="runInternalDiagnosis()">
+                  <i class="fa-solid fa-brain"></i> Tratar com IA Local (Gemini)
+                </button>
+                <button class="btn" onclick="openExternalDiagnosisModal()">
+                  <i class="fa-solid fa-copy"></i> Baixar dados e imputar de volta
+                </button>
+              </div>
+            </div>
+
+            <!-- Daily Quests -->
+            <div class="glass-card">
+              <h2 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--color-primary-hover);">
+                <i class="fa-solid fa-list-check"></i> Desafios Diários (3/3)
+              </h2>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;" id="quests-phase-indicator">
+                Fase do Concurso: Carregando...
+              </p>
+              <div class="quest-list" id="daily-quests-list">
+                <!-- Sorted quests will be dynamically injected here -->
+              </div>
+            </div>
+
+            <!-- Status, Fatigue & Mental Fog Card -->
+            <div class="glass-card" id="status-fatigue-card">
+              <h2 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--color-primary-hover);">
+                <i class="fa-solid fa-battery-half"></i> Carga Cognitiva & Stamina
+              </h2>
+              
+              <!-- Mental Fog Alert -->
+              <div id="mental-fog-alert" class="hidden" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.4); padding: 0.75rem; border-radius: 8px; color: #f87171; font-size: 0.85rem; margin-bottom: 1rem; line-height: 1.4;">
+                <i class="fa-solid fa-cloud"></i> <strong>Neblina Mental Ativa!</strong><br>
+                Você ficou inativo e contraiu fadiga severa. Ganhos de XP cortados em 50%.<br>
+                <button class="btn btn-danger" onclick="startRedemptionSession()" style="width: 100%; margin-top: 0.5rem; padding: 0.4rem; font-size: 0.8rem;">
+                  <i class="fa-solid fa-fire"></i> Iniciar Missão de Redenção
+                </button>
+              </div>
+
+              <!-- General Stamina status -->
+              <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem;">
+                <span id="stamina-status-text">Stamina Mental: 100%</span>
+                <span id="stamina-status-pct">0 / 20 Questões</span>
+              </div>
+              <div class="progress-bar-bg" style="height: 10px; margin-bottom: 1rem; border-radius: 5px;">
+                <div class="progress-bar-fill" id="stamina-bar" style="width: 100%; background: #10b981; border-radius: 5px; transition: width 0.3s, background-color 0.3s;"></div>
+              </div>
+
+              <button class="btn btn-primary" onclick="resetFatigue()" style="width: 100%; padding: 0.6rem;">
+                <i class="fa-solid fa-mug-hot"></i> Fazer Pausa / Pomodoro (Zerar Fadiga)
+              </button>
+            </div>
+
+            <!-- Edital Study Schedule Card -->
+            <div class="glass-card hidden" id="schedule-card">
+              <h2 style="font-size: 1.4rem; font-weight: 700; margin-bottom: 0.5rem; color: var(--color-warning);">
+                <i class="fa-solid fa-calendar-days"></i> Cronograma do Edital
+              </h2>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;" id="schedule-days-left">
+                Carregando cronograma...
+              </p>
+              <div class="quest-list" id="schedule-tasks-list" style="max-height: 250px; overflow-y: auto;">
+                <!-- Schedule tasks will be loaded dynamically -->
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Scientific Backing Section -->
+          <div class="glass-card" id="scientific-backing-card" style="grid-column: span 2; margin-top: 1rem;">
+            <h3 style="font-size: 1.3rem; font-weight: 700; margin-bottom: 1rem; color: var(--color-primary-hover);">
+              <i class="fa-solid fa-microscope"></i> Ciência do Aprendizado: Fundamentação Científica
+            </h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; font-size: 0.95rem; line-height: 1.5;">
+              <div>
+                <h4 style="font-weight: 600; margin-bottom: 0.5rem; color: var(--text-main);"><i class="fa-solid fa-brain"></i> Hipocampo vs. Neocórtex</h4>
+                <p style="color: var(--text-muted);">
+                  Estudos de Roediger & Karpicke (2006) comprovam o "Efeito do Teste": tentar evocar ativamente a resposta transfere as memórias temporárias do hipocampo para o neocórtex, consolidando-as definitivamente durante o sono NREM.
+                </p>
+              </div>
+              <div>
+                <h4 style="font-weight: 600; margin-bottom: 0.5rem; color: var(--text-main);"><i class="fa-solid fa-dumbbell"></i> Dificuldade Desejável</h4>
+                <p style="color: var(--text-muted);">
+                  Elizabeth & Robert Bjork (2011) demonstraram que a facilidade na leitura gera ilusão de fluência. A verdadeira neuroplasticidade requer fricção e esforço cognitivo (Active Recall).
+                </p>
+              </div>
+              <div>
+                <h4 style="font-weight: 600; margin-bottom: 0.5rem; color: var(--text-main);"><i class="fa-solid fa-shuffle"></i> Intercalação e Fadiga</h4>
+                <p style="color: var(--text-muted);">
+                  John Dunlosky (2013) provou que estudar em blocos induz fadiga. Intercalar matérias força o córtex pré-frontal a recarregar novas regras, simulando a troca de contexto e estresse cognitivo do dia da prova.
+                </p>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- PAGE: TOPICS LIST (Sub-page of dashboard) -->
+      <section id="page-topics" class="spa-page hidden">
+        <div class="glass-card">
+          <div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem;">
+            <button class="btn" onclick="showPage('dashboard')">
+              <i class="fa-solid fa-arrow-left"></i> Voltar
+            </button>
+            <h2 id="topics-subject-title" style="font-size: 1.8rem; font-weight: 700;">Direito Constitucional</h2>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 1.5rem;" id="topics-list-container">
+            <!-- Topics will be loaded here -->
+          </div>
+        </div>
+      </section>
+
+      <!-- PAGE: STUDY SESSION (Flashcards / Questions) -->
+      <section id="page-study" class="spa-page hidden">
+        <div class="glass-card" id="study-panel">
+          
+          <!-- Study Progress & Header -->
+          <div class="solver-header" style="border-bottom: 1px solid var(--border-glass); padding-bottom: 1rem; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+            <button class="btn" onclick="quitStudySession()">
+              <i class="fa-solid fa-xmark"></i> Sair da Sessão
+            </button>
+            <div class="solver-progress" id="study-progress-text">Sessão: 1 / 5</div>
+            
+            <!-- Vidas (Hearts) Indicator -->
+            <div id="study-lives-container" class="hidden" style="display: flex; gap: 0.3rem; font-size: 1.4rem; color: #ef4444;" title="Vidas da Missão Diária">
+              <span id="life-heart-1">❤️</span>
+              <span id="life-heart-2">❤️</span>
+              <span id="life-heart-3">❤️</span>
+            </div>
+
+            <div class="timer-ring-container" id="study-timer-container">
+              <i class="fa-regular fa-clock"></i>
+              <span id="study-timer-text">60s</span>
+              <div class="timer-bar-bg">
+                <div class="timer-bar-fill" id="study-timer-bar"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- FLASHCARD PLAYER -->
+          <div id="flashcard-player" class="hidden">
+            <div class="flashcard-wrapper" onclick="flipFlashcard()">
+              <div class="flashcard-inner">
+                <div class="flashcard-front">
+                  <div class="flashcard-meta"><i class="fa-regular fa-lightbulb"></i> Pergunta (Active Recall)</div>
+                  <div class="flashcard-text" id="fc-front-text">Qual o remédio constitucional cabível?</div>
+                  <div class="flashcard-hint"><i class="fa-solid fa-arrows-rotate"></i> Clique para revelar a resposta</div>
+                </div>
+                <div class="flashcard-back">
+                  <div class="flashcard-meta"><i class="fa-regular fa-circle-check"></i> Resposta</div>
+                  <div class="flashcard-text" id="fc-back-text">Habeas Data.</div>
+                  <div class="flashcard-hint"><i class="fa-solid fa-arrows-rotate"></i> Clique para ver a pergunta de novo</div>
+                </div>
+              </div>
+            </div>
+            
+            <div class="flashcard-score-buttons hidden" id="fc-rating-buttons">
+              <button class="btn btn-danger" onclick="submitFlashcardRating(1)">
+                <i class="fa-solid fa-face-frown"></i> Errei / Difícil
+              </button>
+              <button class="btn btn-primary" onclick="submitFlashcardRating(2)">
+                <i class="fa-solid fa-face-meh"></i> Médio / Quase
+              </button>
+              <button class="btn btn-success" onclick="submitFlashcardRating(3)">
+                <i class="fa-solid fa-face-smile"></i> Fácil / Acertei
+              </button>
+            </div>
+          </div>
+
+          <!-- QUESTION SOLVER -->
+          <div id="question-solver" class="question-solver hidden">
+            <!-- ADHD HUD Control Panel -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; flex-wrap: wrap; gap: 0.5rem; background: rgba(255,255,255,0.02); padding: 0.5rem; border-radius: 8px; border: 1px solid var(--border-glass);">
+              <div style="display: flex; gap: 0.5rem;">
+                <button class="btn btn-warning" id="btn-bionic-reading" onclick="toggleBionicReading()" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">
+                  <i class="fa-solid fa-eye"></i> Leitura Biônica: OFF
+                </button>
+                <button class="btn btn-primary" id="btn-brown-noise" onclick="toggleBrownNoise()" style="font-size: 0.8rem; padding: 0.3rem 0.6rem;">
+                  <i class="fa-solid fa-volume-high"></i> Ruído Marrom: OFF
+                </button>
+              </div>
+              
+              <!-- Combo Meter -->
+              <div id="adhd-combo-container" class="hidden" style="font-size: 1rem; font-weight: 900; color: var(--color-warning); text-shadow: 0 0 10px rgba(245,158,11,0.5);">
+                🔥 Combo: <span id="adhd-combo-val">x1.0</span>
+              </div>
+            </div>
+
+            <!-- Ghost Mode Body Doubling -->
+            <div id="adhd-ghost-container" class="hidden" style="margin-bottom: 1rem; background: rgba(0,0,0,0.2); padding: 0.5rem; border-radius: 6px; border: 1px solid var(--border-glass);">
+              <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.25rem;">
+                <span>🏃 Seu Progresso Atual</span>
+                <span style="color: #60a5fa;">👻 Seu Fantasma de Ontem</span>
+              </div>
+              <div class="progress-bar-bg" style="height: 6px; position: relative;">
+                <div class="progress-bar-fill" id="adhd-ghost-user-bar" style="width: 0%; background: var(--color-primary); height: 100%;"></div>
+                <div style="position: absolute; top: 0; left: 0; width: 0%; height: 100%; border-right: 3px solid #60a5fa; transition: width 0.5s;" id="adhd-ghost-bar"></div>
+              </div>
+            </div>
+
+            <!-- XP Multiplier Badge (Módulo II) -->
+            <div id="xp-multiplier-badge" class="hidden xp-multiplier-badge">
+              <i class="fa-solid fa-bolt"></i> XP × 2.5 — Conhecimentos Específicos
+            </div>
+
+            <!-- Code Reader Panel (Minigame de Tensão) -->
+            <div id="code-tension-panel" class="hidden code-reader-panel">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+                <span style="font-size:0.85rem; color:var(--color-warning); font-weight:700;"><i class="fa-solid fa-code"></i> Minigame de Leitura de Código</span>
+                <span style="font-size:0.75rem; color:var(--text-muted);">Segure o clique na linha-chave para revelar as alternativas</span>
+              </div>
+              <div id="code-lines-container" class="code-reader-lines"></div>
+              <div class="tension-bar-container" style="margin-top:0.75rem;">
+                <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-muted); margin-bottom:0.25rem;">
+                  <span>Tensão Neural</span>
+                  <span id="tension-pct">0%</span>
+                </div>
+                <div style="height:8px; background:rgba(255,255,255,0.08); border-radius:4px; overflow:hidden;">
+                  <div id="tension-bar-fill" style="height:100%; width:0%; background:linear-gradient(90deg,#f59e0b,#ef4444); border-radius:4px; transition:width 0.1s linear;"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="question-card-title" id="q-text" style="font-family: 'Inter', 'Roboto', sans-serif; line-height: 1.6; font-size: 1.2rem;">Carregando questão...</div>
+            <ul class="options-list" id="q-options" style="list-style: none; padding: 0;">
+              <!-- Options list items will be injected here -->
+            </ul>
+
+            <!-- Confirm Answer Button (With Press and Hold option) -->
+            <div style="margin-top: 1rem; text-align: right; display: flex; justify-content: flex-end; align-items: center; gap: 0.5rem;">
+              <span id="press-hold-indicator" class="hidden" style="font-size: 0.8rem; color: var(--text-muted); font-style: italic;">Segure para confirmar</span>
+              <button class="btn btn-success" id="btn-submit-answer" style="position: relative; overflow: hidden; min-width: 150px;" onclick="handleNormalSubmit()" onmousedown="startPressAndHold(event)" onmouseup="cancelPressAndHold(event)" onmouseleave="cancelPressAndHold(event)" ontouchstart="startPressAndHold(event)" ontouchend="cancelPressAndHold(event)">
+                Confirmar Resposta
+                <div id="press-hold-progress" style="position: absolute; bottom: 0; left: 0; height: 4px; width: 0%; background: #fff;"></div>
+              </button>
+            </div>
+            
+            <!-- Question Explanation Box (Hidden initially) -->
+            <div class="explanation-card hidden" id="q-explanation-container">
+              <h4 id="q-feedback-title"><i class="fa-solid fa-circle-check"></i> Correto!</h4>
+
+              <!-- Autópsia Forçada Textbox -->
+              <div id="adhd-autopsy-container" class="hidden" style="margin: 1rem 0; padding: 0.75rem; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; text-align: left;">
+                <h5 style="color: #f87171; font-weight: bold; margin-bottom: 0.25rem;"><i class="fa-solid fa-skull"></i> Autópsia Forçada (Modo ERN)</h5>
+                <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.5rem;">Como consequência do erro, reescreva a regra esquecida com suas próprias palavras (mínimo de 50 caracteres) para avançar.</p>
+                <textarea id="adhd-autopsy-input" oninput="handleAutopsyInput()" style="width: 100%; height: 60px; background: #000; border: 1px solid var(--border-glass); border-radius: 4px; color: #fff; padding: 0.4rem; font-size: 0.85rem;" placeholder="Reescreva o conceito aqui para acionar seu córtex pré-frontal..."></textarea>
+                <div style="font-size: 0.75rem; text-align: right; color: var(--text-muted); margin-top: 0.25rem;" id="adhd-autopsy-char-count">0 / 50 caracteres</div>
+              </div>
+
+              <p id="q-explanation-text">Explicação explicativa.</p>
+              <button class="btn btn-primary" id="btn-next-question" style="margin-top: 1rem;" onclick="loadNextQuestion()">
+                Continuar <i class="fa-solid fa-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- LEVEL 1: ACQUISITION / SUMMARY READER -->
+          <div id="summary-reader" class="hidden" style="max-width: 700px; margin: 1rem auto; display: flex; flex-direction: column; gap: 1.5rem;">
+            <div style="font-size: 1.25rem; font-weight: 700; color: var(--color-primary-hover);"><i class="fa-solid fa-book-open"></i> Nível 1: Aquisição de Conhecimento</div>
+            <div id="summary-text-content" style="line-height: 1.7; font-size: 1.1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-glass); padding: 2rem; border-radius: 16px;">
+              <!-- Summary text goes here -->
+            </div>
+            <button class="btn btn-success" onclick="completeSummarySession()" style="align-self: flex-end;">
+              Concluir Leitura (+5 XP) <i class="fa-solid fa-circle-check"></i>
+            </button>
+          </div>
+
+          <!-- SESSION COMPLETE SCREEN -->
+          <div id="session-complete" class="hidden" style="text-align: center; padding: 3rem; display: flex; flex-direction: column; align-items: center; gap: 1.5rem;">
+            <div style="font-size: 5rem; animation: bounce 1s infinite alternate;">🏆</div>
+            <h2 style="font-size: 2.2rem; font-weight: 800; color: var(--color-success);">Sessão Concluída!</h2>
+            <p id="session-complete-subtext">Você está dominando esta matéria!</p>
+            
+            <div style="display: flex; gap: 2rem; margin: 1rem 0;">
+              <div class="glass-card" style="padding: 1.5rem 2.5rem; text-align: center;">
+                <h4 style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase;">XP Ganho</h4>
+                <div style="font-size: 2.2rem; font-weight: 800; color: var(--color-primary);" id="completed-xp-reward">+0 XP</div>
+              </div>
+              <div class="glass-card" style="padding: 1.5rem 2.5rem; text-align: center;">
+                <h4 style="color: var(--text-muted); font-size: 0.9rem; text-transform: uppercase;">Moedas</h4>
+                <div style="font-size: 2.2rem; font-weight: 800; color: var(--color-coin);" id="completed-coins-reward">+0</div>
+              </div>
+            </div>
+
+            <!-- Bonus indicators -->
+            <div style="display: flex; flex-direction: column; gap: 0.5rem;" id="session-bonuses">
+              <!-- e.g. Speed Bonus or Redemption Bonus tags -->
+            </div>
+
+            <button class="btn btn-primary" onclick="showPage('dashboard')" style="padding: 0.8rem 2rem; font-size: 1.1rem; margin-top: 1rem;">
+              Retornar ao Dashboard <i class="fa-solid fa-house"></i>
+            </button>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- PAGE: IMPORT MATERIAL -->
+      <section id="page-import" class="spa-page hidden">
+        
+        <!-- Configuração de Metadados -->
+        <div class="glass-card" style="margin-bottom: 1.5rem; padding: 1.5rem;">
+          <h3 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 1rem; color: var(--color-primary-hover);">
+            <i class="fa-solid fa-sliders"></i> 1. Configurar Assunto e Banca
+          </h3>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+            <div>
+              <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; font-weight: 600;">Nome da Matéria</label>
+              <input type="text" id="import-subject" placeholder="Ex: Direito Constitucional" style="width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; background: #090d16; border: 1px solid var(--border-glass); color: white; font-family: var(--font-family); font-size: 0.95rem;">
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; font-weight: 600;">Nome do Tópico</label>
+              <input type="text" id="import-topic" placeholder="Ex: Direitos Individuais" style="width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; background: #090d16; border: 1px solid var(--border-glass); color: white; font-family: var(--font-family); font-size: 0.95rem;">
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; font-weight: 600;">Banca Examinadora</label>
+              <select id="import-banca" style="width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; background: #090d16; border: 1px solid var(--border-glass); color: white; font-family: var(--font-family); font-size: 0.95rem;">
+                <option value="FGV">FGV</option>
+                <option value="FCC">FCC</option>
+                <option value="Cebraspe">Cebraspe</option>
+                <option value="Vunesp">Vunesp</option>
+                <option value="Outra">Geral / Outra</option>
+              </select>
+            </div>
+            <div>
+              <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; font-weight: 600;">Tipo de Entrada</label>
+              <select id="import-type" style="width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; background: #090d16; border: 1px solid var(--border-glass); color: white; font-family: var(--font-family); font-size: 0.95rem;">
+                <option value="material-pdf">Material de Estudo (PDF/Texto)</option>
+                <option value="edital">Edital / Conteúdo Programático</option>
+                <option value="banco-questoes">Banco de Questões da Banca</option>
+              </select>
+            </div>
+            <div id="exam-date-container" class="hidden">
+              <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; font-weight: 600;">Data da Prova</label>
+              <input type="date" id="import-exam-date" style="width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; background: #090d16; border: 1px solid var(--border-glass); color: white; font-family: var(--font-family); font-size: 0.95rem;">
+            </div>
+          </div>
+        </div>
+
+        <div class="glass-card">
+          <h2 style="font-size: 1.8rem; font-weight: 700; margin-bottom: 1.5rem; color: var(--text-main);">
+            <i class="fa-solid fa-cloud-arrow-up"></i> 2. Processar Material
+          </h2>
+
+          <div class="import-tabs">
+            <button class="import-tab active" onclick="switchImportTab('copy-prompt')">Caminho A: Copiar Prompt Padrão</button>
+            <button class="import-tab" onclick="switchImportTab('paste-json')">Input de Retorno (Paster JSON)</button>
+            <button class="import-tab" onclick="switchImportTab('direct-ia')">Caminho B: Gerar Direto pela IA do Site</button>
+          </div>
+
+          <!-- TAB 1: COPY PROMPT -->
+          <div id="tab-copy-prompt" class="import-section" style="margin-top: 1.5rem;">
+            <p style="color: var(--text-muted);">
+              Copie o prompt padrão abaixo e cole no seu modelo de IA favorito (ChatGPT, Gemini, Claude, etc.) junto com os seus PDFs, resumos ou questões que confia. Depois, copie o JSON retornado por ela e insira na aba <strong>Input de Retorno (Paster JSON)</strong>.
+            </p>
+            <div class="code-box" id="prompt-template-text">
+<!-- Prompt content will be injected by JavaScript -->
+            </div>
+            <button class="btn btn-primary" onclick="copyPromptToClipboard()" style="align-self: flex-start;">
+              <i class="fa-solid fa-copy"></i> Copiar Prompt
+            </button>
+          </div>
+
+          <!-- TAB 2: PASTE JSON -->
+          <div id="tab-paste-json" class="import-section hidden" style="margin-top: 1.5rem;">
+            <p style="color: var(--text-muted);">
+              Insira o bloco JSON retornado pela IA externa abaixo para cadastrar a matéria, o resumo, os flashcards e as questões no sistema.
+            </p>
+            <textarea class="import-textarea" id="paste-json-area" placeholder="Cole o JSON aqui... Ex: { 'subject': '...', 'topic': '...', 'summary': '...', 'flashcards': [...], 'questions': [...] }"></textarea>
+            <div style="display: flex; gap: 1rem;">
+              <button class="btn btn-success" onclick="submitPastedJSON()">
+                <i class="fa-solid fa-circle-check"></i> Importar JSON
+              </button>
+              <button class="btn btn-danger" onclick="clearPasteArea()">
+                <i class="fa-solid fa-trash-can"></i> Limpar
+              </button>
+            </div>
+          </div>
+
+          <!-- TAB 3: DIRECT IA -->
+          <div id="tab-direct-ia" class="import-section hidden" style="margin-top: 1.5rem;">
+            <p style="color: var(--text-muted);">
+              Cole o seu material de estudo (texto simples, resumos ou questões confiáveis) diretamente no campo abaixo. A nossa IA interna (Gemini) irá processar e criar a jornada completa (resumos, flashcards e questões) diretamente no banco do sistema!
+            </p>
+            <textarea class="import-textarea" id="direct-material-area" placeholder="Cole aqui o texto do seu material de estudos (resumos, anotações de aulas ou questões de provas anteriores)..."></textarea>
+            <button class="btn btn-primary" id="btn-generate-direct" onclick="generateDirectFromIA()" style="align-self: flex-start;">
+              <i class="fa-solid fa-wand-magic-sparkles"></i> Gerar Jornada com IA do Site
+            </button>
+          </div>
+
+        </div>
+      </section>
+
+      <!-- PAGE: SHOP -->
+      <section id="page-shop" class="spa-page hidden">
+        <div class="glass-card">
+          <h2 style="font-size: 1.8rem; font-weight: 700; margin-bottom: 0.5rem;"><i class="fa-solid fa-store"></i> Loja de Itens do Concurseiro</h2>
+          <p style="color: var(--text-muted); margin-bottom: 2rem;">Gaste suas moedas ganhas resolvendo questões para comprar vantagens e customizações.</p>
+          
+          <div class="shop-grid">
+            
+            <!-- Item 1: Streak Shield -->
+            <div class="glass-card shop-card">
+              <div class="shop-card-icon">🛡️</div>
+              <div>
+                <div class="shop-card-title">Escudo de Ofensiva</div>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem;">Protege sua ofensiva (Streak) de ser zerada se você passar um dia sem estudar. Máximo de 3 escudos acumulados.</p>
+              </div>
+              <div class="shop-card-price">
+                <i class="fa-solid fa-coins"></i> 50 Moedas
+              </div>
+              <button class="btn btn-success" onclick="buyItem('shield')" style="width: 100%;">Comprar Escudo</button>
+            </div>
+
+            <!-- Item 2: Theme Customizer (Emerald Neon) -->
+            <div class="glass-card shop-card">
+              <div class="shop-card-icon">🟢</div>
+              <div>
+                <div class="shop-card-title">Tema Neon Esmeralda</div>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem;">Desbloqueie e ative o tema visual verde fluorescente para se sentir no verdadeiro espírito do Duolingo.</p>
+              </div>
+              <div class="shop-card-price">
+                <i class="fa-solid fa-coins"></i> 100 Moedas
+              </div>
+              <button class="btn btn-primary" onclick="buyItem('theme-emerald')" id="btn-theme-emerald" style="width: 100%;">Comprar e Ativar</button>
+            </div>
+
+            <!-- Item 3: Theme Customizer (Purple Cyberpunk) -->
+            <div class="glass-card shop-card">
+              <div class="shop-card-icon">🟣</div>
+              <div>
+                <div class="shop-card-title">Tema Roxo Cyberpunk</div>
+                <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem;">Ative o tema padrão roxo cyberpunk holográfico da nossa plataforma.</p>
+              </div>
+              <div class="shop-card-price">
+                Grátis
+              </div>
+              <button class="btn btn-primary" onclick="activateTheme('cyberpunk')" style="width: 100%;">Ativar Tema</button>
+            </div>
+
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- RPG RANDOM ENCOUNTER POPUP MODAL -->
+  <div class="modal-overlay" id="random-encounter-modal">
+    <div class="modal-content">
+      <div style="text-align: center; font-size: 4rem; animation: pulse 1s infinite alternate;">👾</div>
+      <h2 style="text-align: center; font-size: 2rem; font-weight: 800; color: var(--color-warning);">Encontro Aleatório!</h2>
+      <p style="text-align: center; color: var(--text-main); font-size: 1.1rem; line-height: 1.5;">
+        Um monstro de matéria antiga bloqueou seu caminho! Responda rápido a <strong>3 questões surpresa</strong> para desferir ataques críticos, derrotar o monstro e faturar <strong style="color: var(--color-coin);"><i class="fa-solid fa-coins"></i> 30 Moedas Bônus</strong>!
+      </p>
+      <div style="display: flex; gap: 1rem; justify-content: center; margin-top: 1rem;">
+        <button class="btn btn-success" onclick="startRandomEncounterStudy()" style="padding: 0.8rem 2rem; font-size: 1.1rem;">
+          <i class="fa-solid fa-sword"></i> Lutar!
+        </button>
+        <button class="btn" onclick="closeRandomEncounterModal()">
+          Fugir (Custa Streak)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LEVEL UP POPUP MODAL -->
+  <div class="modal-overlay" id="level-up-modal">
+    <div class="modal-content" style="text-align: center; max-width: 450px;">
+      <div style="font-size: 5rem; margin-bottom: 0.5rem;">🎉</div>
+      <div class="level-up-banner">LEVEL UP!</div>
+      <h3 style="font-size: 1.5rem; font-weight: 700; margin: 1rem 0;">Você subiu de nível!</h3>
+      <p style="color: var(--text-muted); font-size: 1.05rem; line-height: 1.5;">
+        Parabéns! Sua sinapse cerebral expandiu. Você ganhou <strong style="color: var(--color-coin);"><i class="fa-solid fa-coins"></i> +100 Moedas Bônus</strong> de recompensa!
+      </p>
+      <button class="btn btn-primary" onclick="closeLevelUpModal()" style="margin-top: 1.5rem; padding: 0.75rem 2rem; align-self: center;">
+        Continuar <i class="fa-solid fa-circle-check"></i>
+      </button>
+    </div>
+  </div>
+
+  <!-- EXTERNAL DIAGNOSIS MODAL -->
+  <div class="modal-overlay" id="external-diagnosis-modal">
+    <div class="modal-content" style="max-width: 600px;">
+      <h2 style="font-size: 1.5rem; font-weight: 700; color: var(--color-primary-hover);">
+        <i class="fa-solid fa-cloud-arrow-up"></i> Processamento de IA Externo
+      </h2>
+      <p style="font-size: 0.95rem; color: var(--text-muted);">
+        Nesse ponto o sistema está programado pra tratar seus dados com IA. Copie o prompt de dados abaixo, envie para outra IA de sua escolha e depois insira o retorno.
+      </p>
+      
+      <div style="background: #090d16; border: 1px solid var(--border-glass); padding: 1rem; border-radius: 8px; font-family: monospace; font-size: 0.85rem; max-height: 150px; overflow-y: auto; color: #38bdf8;" id="external-diagnosis-prompt-text">
+        <!-- Will be loaded dynamically -->
+      </div>
+      
+      <button class="btn btn-primary" onclick="copyDiagnosisPrompt()" style="margin-top: 0.5rem; margin-bottom: 1rem;">
+        <i class="fa-solid fa-copy"></i> Copiar Prompt de Dados
+      </button>
+
+      <div>
+        <label style="display: block; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem;">Insira o retorno da IA (HTML/Texto contendo diagnóstico):</label>
+        <textarea id="external-diagnosis-paste-area" style="width: 100%; height: 120px; background: #090d16; border: 1px solid var(--border-glass); border-radius: 8px; color: white; padding: 0.75rem; font-family: var(--font-family); font-size: 0.95rem;" placeholder="Cole o resultado da IA aqui..."></textarea>
+      </div>
+
+      <div style="display: flex; gap: 1rem; margin-top: 1rem; justify-content: flex-end;">
+        <button class="btn" onclick="closeExternalDiagnosisModal()">Cancelar</button>
+        <button class="btn btn-success" onclick="submitExternalDiagnosisHTML()">Salvar Retorno</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI REPLENISH MODAL -->
+  <div class="modal-overlay" id="ai-replenish-modal">
+    <div class="modal-content" style="max-width: 550px;">
+      <h2 style="font-size: 1.5rem; font-weight: 700; color: var(--color-warning);">
+        <i class="fa-solid fa-circle-exclamation"></i> Questões Insuficientes!
+      </h2>
+      <p style="font-size: 1.05rem; color: var(--text-main); line-height: 1.5;">
+        Nesse ponto o sistema está programado pra tratar seus dados com IA para gerar 5 novas questões para este assunto. Como deseja prosseguir?
+      </p>
+
+      <div style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
+        
+        <!-- Local AI option -->
+        <div class="glass-card" style="padding: 1.25rem; border-color: var(--border-active);">
+          <h4 style="margin-bottom: 0.5rem; font-weight: 700;"><i class="fa-solid fa-brain"></i> Opção 1: IA Local (Gemini Integrado)</h4>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">Usa a chave de API configurada no sistema para gerar questões na hora.</p>
+          <button class="btn btn-primary" id="btn-replenish-local" onclick="executeReplenishLocal()">
+            Gerar com IA Local
+          </button>
+        </div>
+
+        <!-- External AI option -->
+        <div class="glass-card" style="padding: 1.25rem;">
+          <h4 style="margin-bottom: 0.5rem; font-weight: 700;"><i class="fa-solid fa-copy"></i> Opção 2: Baixar dados e imputar de volta</h4>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.75rem;">Copie o prompt padrão para outra IA (ChatGPT/Claude) e paste de volta o JSON.</p>
+          <button class="btn" onclick="executeReplenishExternal()">
+            Copiar Prompt & Inserir JSON
+          </button>
+        </div>
+
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+        <button class="btn btn-danger" onclick="closeReplenishModal()">Cancelar Sessão</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAGE: MARATHON (SIMULADOR DE FADIGA 4H) -->
+  <section id="page-marathon" class="spa-page hidden">
+    <!-- Intro Card -->
+    <div id="marathon-intro-card" class="glass-card" style="max-width:700px; margin:0 auto; text-align:center; padding:2.5rem;">
+      <div style="font-size:4rem; margin-bottom:1rem;">🏃</div>
+      <h1 style="font-size:2rem; font-weight:800; color:var(--color-warning); margin-bottom:0.5rem;">Simulador de Fadiga — Maratona 4h</h1>
+      <p style="color:var(--text-muted); line-height:1.6; margin-bottom:1.5rem;">
+        Simula o dia da prova real: <strong>70 questões ininterruptas</strong> na proporção exata do edital<br>
+        (40 Gerais × 1pt + 30 Específicas × 2.5pts = máx. 115 pts).<br><br>
+        O fundo muda de cor a cada hora para combater a <em>Cegueira Temporal</em> do TDAH.
+      </p>
+      <div style="display:flex; gap:1.5rem; justify-content:center; flex-wrap:wrap; margin-bottom:2rem;">
+        <div class="glass-card" style="padding:1rem 1.5rem; text-align:center;">
+          <div style="font-size:1.8rem;">⏱️</div>
+          <div style="font-size:0.85rem; color:var(--text-muted);">Duração</div>
+          <div style="font-weight:800;">4 horas</div>
+        </div>
+        <div class="glass-card" style="padding:1rem 1.5rem; text-align:center;">
+          <div style="font-size:1.8rem;">📝</div>
+          <div style="font-size:0.85rem; color:var(--text-muted);">Questões</div>
+          <div style="font-weight:800;">70 questões</div>
+        </div>
+        <div class="glass-card" style="padding:1rem 1.5rem; text-align:center;">
+          <div style="font-size:1.8rem;">🌡️</div>
+          <div style="font-size:0.85rem; color:var(--text-muted);">Pontuação Máxima</div>
+          <div style="font-weight:800;">115 pts</div>
+        </div>
+        <div class="glass-card" style="padding:1rem 1.5rem; text-align:center;">
+          <div style="font-size:1.8rem;">🎯</div>
+          <div style="font-size:0.85rem; color:var(--text-muted);">Aprovação Mínima</div>
+          <div style="font-weight:800;">57.5 pts</div>
+        </div>
+      </div>
+      <button class="btn btn-warning" onclick="startMarathon()" style="font-size:1.2rem; padding:1rem 3rem; font-weight:800; box-shadow:0 0 20px rgba(245,158,11,0.4);">
+        <i class="fa-solid fa-play"></i> Iniciar Maratona
+      </button>
+      <button class="btn" onclick="showPage('dashboard')" style="margin-top:0.75rem; display:block; width:100%; margin-left:0;">
+        Voltar ao Dashboard
+      </button>
+    </div>
+
+    <!-- Marathon Active Area -->
+    <div id="marathon-active-area" class="hidden" style="min-height:100vh; transition:background 1s ease;">
+      <!-- Marathon Header -->
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:1rem 1.5rem; background:rgba(0,0,0,0.3); backdrop-filter:blur(10px); position:sticky; top:0; z-index:10; border-bottom:1px solid var(--border-glass);">
+        <div style="display:flex; align-items:center; gap:1rem;">
+          <span style="font-size:1rem; font-weight:800; color:var(--color-warning);">🏃 MARATONA</span>
+          <span id="marathon-season-badge" style="font-size:0.8rem; padding:0.2rem 0.7rem; border-radius:9999px; background:rgba(245,158,11,0.15); color:var(--color-warning); font-weight:700;">🌸 Primavera</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:1.5rem;">
+          <div style="text-align:center;">
+            <div style="font-size:0.7rem; color:var(--text-muted);">QUESTÃO</div>
+            <div style="font-weight:800; font-size:1.1rem;" id="marathon-q-counter">1 / 70</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:0.7rem; color:var(--text-muted);">TEMPO</div>
+            <div style="font-weight:800; font-size:1.3rem; color:var(--color-warning); font-variant-numeric:tabular-nums;" id="marathon-timer">4:00:00</div>
+          </div>
+          <div style="text-align:center;">
+            <div style="font-size:0.7rem; color:var(--text-muted);">ACERTOS</div>
+            <div style="font-weight:800; font-size:1.1rem; color:var(--color-success);" id="marathon-score">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Season Progress Bar -->
+      <div style="height:4px; background:rgba(255,255,255,0.1);">
+        <div id="marathon-time-bar" style="height:100%; width:100%; background:linear-gradient(90deg,var(--color-warning),var(--color-primary)); transition:width 1s linear;"></div>
+      </div>
+
+      <!-- Question Solver -->
+      <div class="glass-card" style="max-width:750px; margin:1.5rem auto; padding:2rem;">
+        <div id="marathon-q-module-badge" class="hidden xp-multiplier-badge" style="margin-bottom:1rem;"><i class="fa-solid fa-bolt"></i> Conhecimentos Específicos × 2.5</div>
+        <div style="font-size:1.15rem; font-weight:700; line-height:1.6; margin-bottom:1.5rem;" id="marathon-q-text">Carregando...</div>
+        <ul class="options-list" id="marathon-q-options" style="list-style:none; padding:0;"></ul>
+        <div style="margin-top:1.5rem; display:flex; justify-content:flex-end;">
+          <button class="btn btn-primary" id="btn-marathon-confirm" onclick="confirmMarathonAnswer()" style="padding:0.75rem 2rem; font-size:1rem;">
+            Confirmar <i class="fa-solid fa-arrow-right"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Marathon Results -->
+    <div id="marathon-results-card" class="glass-card hidden" style="max-width:650px; margin:2rem auto; text-align:center; padding:2.5rem;">
+      <div id="marathon-results-emoji" style="font-size:4rem;">📊</div>
+      <h2 id="marathon-results-title" style="font-size:2rem; font-weight:800; margin:1rem 0;">Resultado da Maratona</h2>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin:1.5rem 0;">
+        <div class="glass-card" style="padding:1rem;">
+          <div style="font-size:0.8rem; color:var(--text-muted);">Gerais (×1pt)</div>
+          <div style="font-size:1.8rem; font-weight:800;" id="marathon-score-general">0</div>
+          <div style="font-size:0.75rem; color:var(--text-muted);" id="marathon-acc-general">0/40</div>
+        </div>
+        <div class="glass-card" style="padding:1rem; border-color:gold;">
+          <div style="font-size:0.8rem; color:gold;">Específicos (×2.5pt)</div>
+          <div style="font-size:1.8rem; font-weight:800; color:gold;" id="marathon-score-specific">0</div>
+          <div style="font-size:0.75rem; color:var(--text-muted);" id="marathon-acc-specific">0/30</div>
+        </div>
+      </div>
+      <div style="font-size:2.5rem; font-weight:900; margin:1rem 0;" id="marathon-total-score">0 pts</div>
+      <div id="marathon-approval-badge" style="padding:0.75rem 2rem; border-radius:9999px; font-weight:800; font-size:1.1rem; display:inline-block; margin-bottom:1.5rem;">—</div>
+      <button class="btn btn-primary" onclick="showPage('dashboard')" style="width:100%; padding:0.75rem;">
+        Retornar ao Dashboard
+      </button>
+    </div>
+  </section>
+
+  <!-- AI REPLENISH EXTERNAL SUBMIT MODAL -->
+  <div class="modal-overlay" id="ai-replenish-external-input-modal">
+    <div class="modal-content" style="max-width: 550px;">
+      <h2 style="font-size: 1.5rem; font-weight: 700; color: var(--color-primary-hover);">
+        <i class="fa-solid fa-upload"></i> Upload de Questões Externo
+      </h2>
+      <p style="font-size: 0.95rem; color: var(--text-muted); margin-bottom: 1rem;">
+        1. Copie o prompt padrão de reabastecimento gerado abaixo.<br>
+        2. Envie à sua IA favorita.<br>
+        3. Cole o JSON de retorno no campo de texto abaixo e confirme.
+      </p>
+
+      <div style="background: #090d16; border: 1px solid var(--border-glass); padding: 0.8rem; border-radius: 8px; font-family: monospace; font-size: 0.85rem; max-height: 120px; overflow-y: auto; color: #38bdf8; margin-bottom: 1rem;" id="ai-replenish-prompt-text">
+        <!-- Injected dynamically -->
+      </div>
+
+      <button class="btn btn-primary" onclick="copyReplenishPrompt()" style="margin-bottom: 1rem; display: inline-flex;">
+        <i class="fa-solid fa-copy"></i> Copiar Prompt
+      </button>
+
+      <textarea id="ai-replenish-paste-area" style="width: 100%; height: 120px; background: #090d16; border: 1px solid var(--border-glass); border-radius: 8px; color: white; padding: 0.75rem; font-family: var(--font-family); font-size: 0.95rem;" placeholder="Cole o JSON com as 5 novas questões geradas aqui..."></textarea>
+
+      <div style="display: flex; gap: 1rem; margin-top: 1rem; justify-content: flex-end;">
+        <button class="btn" onclick="closeReplenishExternalInputModal()">Voltar</button>
+        <button class="btn btn-success" onclick="submitReplenishExternalJSON()">Confirmar e Iniciar Estudo</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- BRAIN DUMP (ESTACIONAMENTO DE PENSAMENTOS) MODAL -->
+  <div class="modal-overlay" id="brain-dump-modal" style="background: rgba(0,0,0,0.85); backdrop-filter: blur(10px);">
+    <div class="modal-content" style="max-width: 500px; border-color: var(--color-warning); box-shadow: 0 0 30px rgba(245, 158, 11, 0.25);">
+      <h2 style="font-size: 1.4rem; font-weight: 800; color: var(--color-warning); margin-bottom: 0.5rem;">
+        <i class="fa-solid fa-parking"></i> Estacionamento de Pensamentos
+      </h2>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+        Escreva a ideia ou distração intrusiva para tirá-la da memória de trabalho. Ela será salva em arquivo e o foco voltará imediatamente.
+      </p>
+      
+      <input type="text" id="brain-dump-input" style="width: 100%; font-size: 1.1rem; background: #000; border: 1px solid var(--border-glass); border-radius: 8px; color: #fff; padding: 0.8rem; margin-bottom: 1.25rem;" placeholder="Ex: Cancelar assinatura da academia ou Pesquisar nota de corte..." autofocus>
+      
+      <div style="display: flex; justify-content: flex-end; gap: 1rem;">
+        <button class="btn" onclick="closeBrainDump()">Cancelar</button>
+        <button class="btn btn-warning" onclick="submitBrainDump()">Estacionar Pensamento (Enter)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- EDITAL CONFIGURATION MODAL -->
+  <div class="modal-overlay" id="edital-config-modal">
+    <div class="modal-content" style="max-width: 550px;">
+      <h2 style="font-size: 1.5rem; font-weight: 700; color: var(--color-primary-hover);">
+        <i class="fa-solid fa-file-invoice"></i> Configuração do Edital
+      </h2>
+      <p style="font-size: 0.95rem; color: var(--text-muted); margin-bottom: 1rem;">
+        O edital foi carregado com sucesso no sistema. Ajuste os pesos estratégicos para consolidar seu cronograma e calibrar os ganhos de XP.
+      </p>
+
+      <div style="margin-bottom: 1rem;">
+        <label style="display: block; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem;">Qual o tipo de edital?</label>
+        <div style="display: flex; gap: 1rem;">
+          <label style="flex: 1; display: flex; align-items: center; gap: 0.5rem; background: #090d16; border: 1px solid var(--border-glass); padding: 0.8rem; border-radius: 8px; cursor: pointer;">
+            <input type="radio" name="edital-status" value="atual" checked style="transform: scale(1.2);">
+            <div>
+              <strong>Edital Atual</strong>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Vigente e em foco de estudos.</div>
+            </div>
+          </label>
+          <label style="flex: 1; display: flex; align-items: center; gap: 0.5rem; background: #090d16; border: 1px solid var(--border-glass); padding: 0.8rem; border-radius: 8px; cursor: pointer;">
+            <input type="radio" name="edital-status" value="passado" style="transform: scale(1.2);">
+            <div>
+              <strong>Edital Passado</strong>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Para simulação de estudos antigos.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 1.5rem;">
+        <label style="display: block; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem;">Deseja realizar o teste de Nivelamento Inicial para começar no nível ideal ($N_0$)?</label>
+        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.8rem; line-height: 1.4;">
+          Será aplicada uma bateria diagnóstica rápida com 10 questões de todos os ramos. Recomenda-se realizar para auditar seu conhecimento!
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 1rem; justify-content: flex-end;">
+        <button class="btn" onclick="skipPlacementTest()">Não, começar do Nível 1</button>
+        <button class="btn btn-success" onclick="startPlacementTest()">Confirmar e Iniciar Nivelamento</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PLACEMENT TEST (NIVELAMENTO) MODAL -->
+  <div class="modal-overlay" id="placement-test-modal">
+    <div class="modal-content" style="max-width: 600px;">
+      <h2 style="font-size: 1.5rem; font-weight: 700; color: var(--color-warning);">
+        <i class="fa-solid fa-graduation-cap"></i> Bateria Diagnóstica de Nivelamento
+      </h2>
+      <p style="font-size: 0.9rem; color: var(--text-muted); margin-bottom: 1rem;" id="placement-meta-intro">
+        O Nivelamento Inicial ($N_0$) auditará sua rede sináptica. O resultado definirá seu nível de largada.
+      </p>
+
+      <div style="border-bottom: 1px solid var(--border-glass); padding-bottom: 0.75rem; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center;">
+        <span style="font-weight: 600;" id="placement-progress-text">Questão 1 de 10</span>
+        <span class="subject-tier tier-aprendiz" id="placement-subject-tag">Direito Administrativo</span>
+      </div>
+
+      <div id="placement-question-solver" style="margin-bottom: 1.5rem;">
+        <div style="font-size: 1.1rem; font-weight: bold; margin-bottom: 1rem; line-height: 1.5;" id="placement-q-text">Enunciado da questão diagnóstica...</div>
+        <ul class="options-list" id="placement-q-options" style="list-style: none; padding: 0;">
+          <!-- Options list items will be injected here -->
+        </ul>
+
+        <!-- Metacognition Confidence Buttons -->
+        <div style="margin-top: 1.5rem; padding: 1rem; background: #090d16; border: 1px solid var(--border-glass); border-radius: 12px;">
+          <h5 style="margin-bottom: 0.5rem; font-weight: bold; color: var(--color-warning); font-size: 0.85rem;"><i class="fa-solid fa-brain"></i> Qual o seu grau de certeza nesta resposta?</h5>
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-meta" id="btn-diag-meta-chute" onclick="selectDiagnosticMetacognition('Chute')" style="flex: 1; padding: 0.5rem; font-size: 0.8rem;">🎲 Chute</button>
+            <button class="btn btn-meta" id="btn-diag-meta-duvida" onclick="selectDiagnosticMetacognition('Dúvida')" style="flex: 1; padding: 0.5rem; font-size: 0.8rem;">🤔 Dúvida</button>
+            <button class="btn btn-meta btn-primary" id="btn-diag-meta-certeza" onclick="selectDiagnosticMetacognition('Certeza Absoluta')" style="flex: 1; padding: 0.5rem; font-size: 0.8rem;">🎯 Certeza Absoluta</button>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 1rem;">
+        <button class="btn btn-danger" onclick="quitDiagnosticTest()">Sair da Bateria</button>
+        <button class="btn btn-success" id="btn-placement-submit" onclick="submitPlacementQuestion()">Confirmar Resposta</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PLACEMENT RESULTS MODAL -->
+  <div class="modal-overlay" id="placement-results-modal">
+    <div class="modal-content" style="max-width: 450px; text-align: center;">
+      <div style="font-size: 4rem; margin-bottom: 0.5rem;">📊</div>
+      <h3 style="font-size: 1.8rem; font-weight: 800; color: var(--color-success);">Nivelamento Concluído!</h3>
+      <p style="color: var(--text-muted); font-size: 1rem; line-height: 1.5; margin: 1rem 0;" id="placement-results-subtext">
+        Seu nível inicial na matéria foi calibrado com base no erro de previsão e na metacognição!
+      </p>
+
+      <div id="placement-calibrated-levels" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0; text-align: left; background: #090d16; border: 1px solid var(--border-glass); padding: 1rem; border-radius: 8px;">
+        <!-- Calculated N_0 list -->
+      </div>
+
+      <button class="btn btn-primary" onclick="closePlacementResults()" style="width: 100%; margin-top: 1rem; padding: 0.75rem;">
+        Ir para o Dashboard
+      </button>
+    </div>
+  </div>
+
+  <!-- ADHD MICRO-PAUSE MODAL -->
+  <div class="modal-overlay" id="adhd-pause-modal">
+    <div class="modal-content" style="max-width: 400px; text-align: center; border-color: var(--color-warning);">
+      <div style="font-size: 4rem; animation: rotate 10s infinite linear;">⏰</div>
+      <h3 style="font-size: 1.6rem; font-weight: 800; color: var(--color-warning); margin: 0.5rem 0;">Micro-Pausa TDAH</h3>
+      <p style="color: var(--text-main); font-size: 1.05rem; line-height: 1.5; margin-bottom: 1.5rem;">
+        Você está em fluxo há 10 minutos!<br>
+        Beba água, respire fundo e alongue o pescoço.<br>
+        A tela irá descongelar em <strong id="adhd-pause-timer" style="color: var(--color-warning);">60</strong> segundos.
+      </p>
+      <div class="progress-bar-bg" style="height: 6px; border-radius: 3px;">
+        <div class="progress-bar-fill" id="adhd-pause-bar" style="width: 100%; background: var(--color-warning); border-radius: 3px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- APP LOGIC CLIENT SCRIPTS -->
+
+  <!-- BLACKOUT MODAL (Tela Preta — Proteção contra o Zero) -->
+  <div class="modal-overlay" id="blackout-modal" style="background:rgba(0,0,0,0.97); backdrop-filter:blur(20px);">
+    <div class="modal-content" style="max-width:520px; text-align:center; border-color:#ef4444; box-shadow:0 0 40px rgba(239,68,68,0.3);">
+      <div style="font-size:5rem; margin-bottom:1rem; animation:flicker 1.5s infinite;">💻</div>
+      <h2 style="font-size:1.8rem; font-weight:900; color:#ef4444; margin-bottom:0.5rem;">TELA PRETA</h2>
+      <p style="font-size:1rem; color:#fca5a5; line-height:1.6; margin-bottom:1rem;">
+        O sistema detectou que a matéria <strong id="blackout-subject-name" style="color:#fff;">—</strong> está com domínio crítico abaixo de 15%.<br><br>
+        Você está em risco de <strong>zerar essa disciplina no edital</strong> e ser eliminado.<br>
+        As matérias favoritas foram <strong>bloqueadas</strong> até você executar o Hard Reset.
+      </p>
+      <div style="background:rgba(239,68,68,0.1); border:1px solid rgba(239,68,68,0.3); border-radius:12px; padding:1rem; margin-bottom:1.5rem;">
+        <div style="font-size:0.9rem; color:#fca5a5; margin-bottom:0.5rem;">Matérias com domínio crítico:</div>
+        <div id="blackout-critical-list" style="display:flex; flex-direction:column; gap:0.4rem;"></div>
+      </div>
+      <button class="btn btn-danger" onclick="triggerHardReset()" style="width:100%; padding:1rem; font-size:1.1rem; font-weight:800; box-shadow:0 0 20px rgba(239,68,68,0.4);">
+        <i class="fa-solid fa-power-off"></i> Executar Hard Reset (Questão Relâmpago)
+      </button>
+    </div>
+  </div>
+
+  <!-- HARD RESET CHALLENGE MODAL -->
+  <div class="modal-overlay" id="hard-reset-modal">
+    <div class="modal-content" style="max-width:580px; border-color:#f59e0b; box-shadow:0 0 30px rgba(245,158,11,0.3);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h3 style="font-size:1.4rem; font-weight:800; color:#f59e0b;"><i class="fa-solid fa-bolt"></i> Hard Reset — Questão Relâmpago</h3>
+        <div style="text-align:center;">
+          <div style="font-size:2.5rem; font-weight:900; color:#f59e0b;" id="hard-reset-timer">15</div>
+          <div style="font-size:0.7rem; color:var(--text-muted);">segundos</div>
+        </div>
+      </div>
+      <div style="height:4px; background:rgba(255,255,255,0.1); border-radius:2px; margin-bottom:1.5rem; overflow:hidden;">
+        <div id="hard-reset-timer-bar" style="height:100%; width:100%; background:linear-gradient(90deg,#f59e0b,#ef4444); border-radius:2px; transition:width 1s linear;"></div>
+      </div>
+      <div style="font-size:0.85rem; color:var(--text-muted); margin-bottom:0.5rem;">Matéria: <strong id="hard-reset-subject-name" style="color:var(--color-warning);">—</strong></div>
+      <div style="font-size:1.1rem; font-weight:700; line-height:1.6; margin-bottom:1.5rem;" id="hard-reset-q-text">Carregando questão...</div>
+      <ul class="options-list" id="hard-reset-q-options" style="list-style:none; padding:0;"></ul>
+      <div style="margin-top:1.5rem; display:flex; justify-content:flex-end;">
+        <button class="btn btn-warning" onclick="submitHardReset()" style="padding:0.75rem 2rem; font-weight:800;">
+          <i class="fa-solid fa-check"></i> Confirmar Resposta
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CREATE PROFILE MODAL -->
+  <div class="modal-overlay" id="create-profile-modal">
+    <div class="modal-content" style="max-width:480px;">
+      <h2 style="font-size:1.5rem; font-weight:700; color:var(--color-primary-hover); margin-bottom:1.5rem;">
+        <i class="fa-solid fa-user-plus"></i> Novo Perfil de Estudos
+      </h2>
+      <div style="display:flex; flex-direction:column; gap:1rem;">
+        <div>
+          <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.4rem; font-weight:600;">Emoji do Perfil</label>
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;" id="avatar-emoji-selector">
+            <span class="avatar-option selected" onclick="selectAvatar('🎯')" data-emoji="🎯">🎯</span>
+            <span class="avatar-option" onclick="selectAvatar('🚀')" data-emoji="🚀">🚀</span>
+            <span class="avatar-option" onclick="selectAvatar('⚡')" data-emoji="⚡">⚡</span>
+            <span class="avatar-option" onclick="selectAvatar('🔥')" data-emoji="🔥">🔥</span>
+            <span class="avatar-option" onclick="selectAvatar('💻')" data-emoji="💻">💻</span>
+            <span class="avatar-option" onclick="selectAvatar('📚')" data-emoji="📚">📚</span>
+            <span class="avatar-option" onclick="selectAvatar('⚖️')" data-emoji="⚖️">⚖️</span>
+            <span class="avatar-option" onclick="selectAvatar('🏆')" data-emoji="🏆">🏆</span>
+          </div>
+        </div>
+        <div>
+          <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.4rem; font-weight:600;">Nome do Concurseiro</label>
+          <input type="text" id="new-profile-name" placeholder="Ex: João — TRF Perito" maxlength="40" style="width:100%; padding:0.7rem; background:#090d16; border:1px solid var(--border-glass); border-radius:8px; color:#fff; font-size:0.95rem; font-family:var(--font-family);">
+        </div>
+        <div>
+          <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.4rem; font-weight:600;">Nome do Concurso (opcional)</label>
+          <input type="text" id="new-profile-exam" placeholder="Ex: TRF — Perito Judicial em TI" maxlength="60" style="width:100%; padding:0.7rem; background:#090d16; border:1px solid var(--border-glass); border-radius:8px; color:#fff; font-size:0.95rem; font-family:var(--font-family);">
+        </div>
+        <div>
+          <label style="display:block; font-size:0.85rem; color:var(--text-muted); margin-bottom:0.4rem; font-weight:600;">Data da Prova (opcional)</label>
+          <input type="date" id="new-profile-date" style="width:100%; padding:0.7rem; background:#090d16; border:1px solid var(--border-glass); border-radius:8px; color:#fff; font-size:0.95rem; font-family:var(--font-family);">
+        </div>
+      </div>
+      <div style="display:flex; gap:1rem; justify-content:flex-end; margin-top:1.5rem;">
+        <button class="btn" onclick="closeCreateProfileModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="submitCreateProfile()" style="font-weight:800;">
+          <i class="fa-solid fa-user-plus"></i> Criar Perfil e Começar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CRITICAL HIT OVERLAY -->
+  <div id="critical-hit-overlay" class="hidden" style="position:fixed; inset:0; z-index:9999; pointer-events:none; display:flex; align-items:center; justify-content:center;">
+    <div id="critical-hit-content" style="text-align:center; animation:criticalHitAnim 1.5s ease forwards;">
+      <div style="font-size:5rem;">⚡</div>
+      <div style="font-size:3rem; font-weight:900; background:linear-gradient(135deg,#f59e0b,#fbbf24); -webkit-background-clip:text; -webkit-text-fill-color:transparent; text-shadow:none; filter:drop-shadow(0 0 20px rgba(245,158,11,0.8));">CRITICAL HIT!</div>
+      <div style="font-size:1.5rem; font-weight:800; color:#fff;" id="critical-hit-xp">+250 XP</div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+
+</body>
+</html>
