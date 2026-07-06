@@ -2358,3 +2358,355 @@ window.triggerADHDMicroPause = function() {
   }
 };
 
+
+// ============================
+// CRITICAL HIT ANIMATION
+// ============================
+function showCriticalHit(xp) {
+  const overlay = document.getElementById('critical-hit-overlay');
+  const xpEl = document.getElementById('critical-hit-xp');
+  if (!overlay) return;
+  if (xpEl) xpEl.textContent = `+${xp} XP`;
+  overlay.classList.remove('hidden');
+  const content = document.getElementById('critical-hit-content');
+  if (content) { const clone = content.cloneNode(true); content.parentNode.replaceChild(clone, content); }
+  try { playSound.levelUp(); } catch(e) {}
+  setTimeout(() => { overlay.classList.add('hidden'); }, 1800);
+}
+
+function updateXpBadge(question) {
+  const badge = document.getElementById('xp-multiplier-badge');
+  if (!badge) return;
+  if (question && question.module === 'specific') badge.classList.remove('hidden');
+  else badge.classList.add('hidden');
+}
+
+// ============================
+// MULTI-PROFILE FUNCTIONS
+// ============================
+window.toggleProfilePanel = function() {
+  const dropdown = document.getElementById('profile-dropdown');
+  const chevron = document.getElementById('profile-chevron');
+  if (!dropdown) return;
+  const isHidden = dropdown.classList.toggle('hidden');
+  if (chevron) chevron.style.transform = isHidden ? '' : 'rotate(180deg)';
+};
+
+window.activateProfile = async function(profileId) {
+  try {
+    const res = await fetch(`${API_BASE}/profiles/${profileId}/activate`, { method: 'PUT' });
+    const data = await res.json();
+    if (data.success) {
+      await loadProfile(); await loadProfiles(); await loadSubjects(); await loadStudySchedule();
+      const d = document.getElementById('profile-dropdown'); if (d) d.classList.add('hidden');
+      const c = document.getElementById('profile-chevron'); if (c) c.style.transform = '';
+    }
+  } catch (e) { alert('Erro ao trocar perfil: ' + e.message); }
+};
+
+window.openCreateProfileModal = function() {
+  const modal = document.getElementById('create-profile-modal');
+  if (modal) modal.classList.add('active');
+  ['new-profile-name','new-profile-exam','new-profile-date'].forEach(id => { const el = document.getElementById(id); if(el) el.value=''; });
+  document.querySelectorAll('.avatar-option').forEach(el => el.classList.remove('selected'));
+  const first = document.querySelector('.avatar-option[data-emoji="🎯"]');
+  if (first) first.classList.add('selected');
+  state._selectedAvatar = '🎯';
+  const d = document.getElementById('profile-dropdown'); if (d) d.classList.add('hidden');
+};
+
+window.closeCreateProfileModal = function() {
+  const modal = document.getElementById('create-profile-modal');
+  if (modal) modal.classList.remove('active');
+};
+
+window.selectAvatar = function(emoji) {
+  state._selectedAvatar = emoji;
+  document.querySelectorAll('.avatar-option').forEach(el => el.classList.remove('selected'));
+  const el = document.querySelector(`.avatar-option[data-emoji="${emoji}"]`);
+  if (el) el.classList.add('selected');
+};
+
+window.submitCreateProfile = async function() {
+  const name = document.getElementById('new-profile-name')?.value?.trim();
+  const examName = document.getElementById('new-profile-exam')?.value?.trim() || '';
+  const examDate = document.getElementById('new-profile-date')?.value || '';
+  const avatarEmoji = state._selectedAvatar || '🎯';
+  if (!name) { alert('Por favor, insira o nome do concurseiro.'); return; }
+  try {
+    const res = await fetch(`${API_BASE}/profiles`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, avatarEmoji, examName, examDate })
+    });
+    const data = await res.json();
+    if (data.success) {
+      closeCreateProfileModal();
+      await loadProfile(); await loadProfiles(); await loadSubjects(); await loadStudySchedule();
+    } else { alert(data.error || 'Erro ao criar perfil.'); }
+  } catch (e) { alert('Erro ao criar perfil: ' + e.message); }
+};
+
+// ============================
+// HARD RESET (TELA PRETA)
+// ============================
+let hardResetState = { currentSubjectId: null, currentQuestion: null, selectedAnswer: null, timerInterval: null };
+
+async function checkCriticalLock() {
+  try {
+    const res = await fetch(`${API_BASE}/study/check-critical`);
+    const data = await res.json();
+    if (data.hasCritical && data.criticalSubjects.length > 0) showBlackoutModal(data.criticalSubjects);
+  } catch (e) { console.error('checkCriticalLock error:', e); }
+}
+
+function showBlackoutModal(criticalSubjects) {
+  const modal = document.getElementById('blackout-modal');
+  const listEl = document.getElementById('blackout-critical-list');
+  const nameEl = document.getElementById('blackout-subject-name');
+  if (!modal || !listEl) return;
+  if (nameEl) nameEl.textContent = criticalSubjects[0].name;
+  listEl.innerHTML = criticalSubjects.map(s => `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.4rem 0.5rem;background:rgba(239,68,68,0.08);border-radius:6px;"><span>🚨</span><span style="font-weight:700;">${s.name}</span><span style="color:#ef4444;margin-left:auto;">${s.mastery||0}%</span></div>`).join('');
+  hardResetState.currentSubjectId = criticalSubjects[0].id;
+  modal.classList.add('active');
+}
+
+window.triggerHardReset = async function() {
+  const bm = document.getElementById('blackout-modal'); if (bm) bm.classList.remove('active');
+  try {
+    const res = await fetch(`${API_BASE}/subjects/${hardResetState.currentSubjectId}/sample-question`);
+    if (!res.ok) { alert('Sem questoes disponiveis. Importe mais questoes desta materia.'); return; }
+    const q = await res.json();
+    hardResetState.currentQuestion = q; hardResetState.selectedAnswer = null;
+    const modal = document.getElementById('hard-reset-modal');
+    const qTextEl = document.getElementById('hard-reset-q-text');
+    const optionsEl = document.getElementById('hard-reset-q-options');
+    const snEl = document.getElementById('hard-reset-subject-name');
+    const timerEl = document.getElementById('hard-reset-timer');
+    const timerBarEl = document.getElementById('hard-reset-timer-bar');
+    if (snEl) snEl.textContent = q.topic_name || 'Materia Critica';
+    if (qTextEl) qTextEl.textContent = q.question_text;
+    if (optionsEl) {
+      const opts = JSON.parse(q.options || '[]');
+      optionsEl.innerHTML = opts.map(opt => `<li class="option-item" onclick="selectHardResetOption('${opt.replace(/'/g,"\\'")}')" style="padding:0.75rem 1rem;border-radius:8px;cursor:pointer;border:1px solid var(--border-glass);margin-bottom:0.5rem;transition:all 0.2s;"><span>${opt}</span></li>`).join('');
+    }
+    let timeLeft = 15;
+    clearInterval(hardResetState.timerInterval);
+    hardResetState.timerInterval = setInterval(() => {
+      timeLeft--;
+      if (timerEl) timerEl.textContent = timeLeft;
+      if (timerBarEl) timerBarEl.style.width = `${(timeLeft/15)*100}%`;
+      if (timeLeft <= 0) { clearInterval(hardResetState.timerInterval); submitHardResetResult(false); }
+    }, 1000);
+    if (modal) modal.classList.add('active');
+  } catch (e) { alert('Erro ao carregar questao: ' + e.message); }
+};
+
+window.selectHardResetOption = function(option) {
+  hardResetState.selectedAnswer = option;
+  document.querySelectorAll('#hard-reset-q-options .option-item').forEach(el => {
+    const isSel = el.querySelector('span').textContent === option;
+    el.style.borderColor = isSel ? 'var(--color-warning)' : 'var(--border-glass)';
+    el.style.background = isSel ? 'rgba(245,158,11,0.12)' : 'transparent';
+  });
+};
+
+window.submitHardReset = function() {
+  if (!hardResetState.selectedAnswer) { alert('Selecione uma alternativa!'); return; }
+  clearInterval(hardResetState.timerInterval);
+  const q = hardResetState.currentQuestion;
+  submitHardResetResult(q && q.correct_answer === hardResetState.selectedAnswer);
+};
+
+async function submitHardResetResult(isCorrect) {
+  const modal = document.getElementById('hard-reset-modal');
+  if (modal) modal.classList.remove('active');
+  if (isCorrect) {
+    await fetch(`${API_BASE}/study/unlock-subject`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ subjectId: hardResetState.currentSubjectId }) });
+    alert('Hard Reset bem-sucedido! Materia desbloqueada.');
+    try { playSound.levelUp(); } catch(e) {}
+    await loadProfile(); await loadSubjects();
+  } else {
+    alert('Hard Reset falhou. A materia permanece bloqueada.');
+  }
+}
+
+// ============================
+// CODE READER MINIGAME (Press-and-Hold)
+// ============================
+let codeReaderState = { keyLineIndex: null, holdInterval: null, holdProgress: 0, revealed: false };
+
+function initCodeReader(question) {
+  const panel = document.getElementById('code-tension-panel');
+  const container = document.getElementById('code-lines-container');
+  const optionsList = document.getElementById('q-options');
+  if (!panel || !container) return;
+  let codeLines; try { codeLines = JSON.parse(question.code_lines||'[]'); } catch { codeLines=[]; }
+  if (codeLines.length === 0) return;
+  codeReaderState.keyLineIndex = question.key_line_index ?? Math.floor(codeLines.length/2);
+  codeReaderState.holdProgress = 0; codeReaderState.revealed = false;
+  panel.classList.remove('hidden');
+  if (optionsList) optionsList.style.opacity = '0.1';
+  container.innerHTML = codeLines.map((line, idx) => `<div class="code-line" id="code-line-${idx}" onmousedown="startCodeHold(${idx})" ontouchstart="startCodeHold(${idx})" onmouseup="stopCodeHold(${idx})" ontouchend="stopCodeHold(${idx})" onmouseleave="stopCodeHold(${idx})"><span class="code-line-number">${idx+1}</span><span class="code-line-text">${line}</span>${idx===codeReaderState.keyLineIndex?'<span style="margin-left:auto;font-size:0.7rem;color:var(--color-warning);">← segure</span>':''}</div>`).join('');
+}
+
+window.startCodeHold = function(lineIdx) {
+  if (codeReaderState.revealed) return;
+  if (lineIdx !== codeReaderState.keyLineIndex) { const el=document.getElementById(`code-line-${lineIdx}`); if(el) el.classList.add('shattered'); return; }
+  const lineEl = document.getElementById(`code-line-${lineIdx}`);
+  if (lineEl) lineEl.classList.add('holding');
+  const barFill = document.getElementById('tension-bar-fill');
+  const pct = document.getElementById('tension-pct');
+  codeReaderState.holdInterval = setInterval(() => {
+    codeReaderState.holdProgress += 5;
+    const p = Math.min(100, codeReaderState.holdProgress);
+    if (barFill) barFill.style.width = p+'%'; if (pct) pct.textContent = p+'%';
+    if (codeReaderState.holdProgress >= 100) {
+      clearInterval(codeReaderState.holdInterval); codeReaderState.revealed = true;
+      const ol = document.getElementById('q-options'); if (ol) { ol.style.opacity='1'; ol.style.transition='opacity 0.4s'; }
+      if (lineEl) lineEl.classList.remove('holding');
+      if (barFill) barFill.style.background = '#10b981';
+      if (pct) pct.textContent = 'Desbloqueado!';
+    }
+  }, 100);
+};
+
+window.stopCodeHold = function(lineIdx) {
+  if (lineIdx !== codeReaderState.keyLineIndex) return;
+  if (codeReaderState.holdInterval) { clearInterval(codeReaderState.holdInterval); codeReaderState.holdInterval = null; }
+  if (!codeReaderState.revealed && codeReaderState.holdProgress > 0 && codeReaderState.holdProgress < 100) {
+    codeReaderState.holdProgress = Math.max(0, codeReaderState.holdProgress-30);
+    const bf = document.getElementById('tension-bar-fill'); const pc = document.getElementById('tension-pct');
+    if (bf) bf.style.width = codeReaderState.holdProgress+'%'; if (pc) pc.textContent = codeReaderState.holdProgress+'%';
+    const lineEl = document.getElementById(`code-line-${lineIdx}`); if (lineEl) lineEl.classList.remove('holding');
+  }
+};
+
+// ============================
+// MARATHON MODE (Simulador de Fadiga 4h)
+// ============================
+let marathonState = { questions:[], currentIndex:0, answers:[], startedAt:null, timerInterval:null, secondsElapsed:0, selectedOption:null, correct:0 };
+const MARATHON_DURATION = 4*60*60;
+const SEASONS = [
+  { badge:'🌸 Primavera', class:'season-spring' },
+  { badge:'☀️ Verão',     class:'season-summer' },
+  { badge:'🍂 Outono',    class:'season-autumn' },
+  { badge:'❄️ Inverno',   class:'season-winter' }
+];
+
+window.startMarathon = async function() {
+  const introCard = document.getElementById('marathon-intro-card');
+  try {
+    if (introCard) introCard.innerHTML = `<div style="text-align:center;padding:3rem;"><i class="fa-solid fa-circle-notch fa-spin" style="font-size:2rem;"></i><p style="margin-top:1rem;">Gerando maratona...</p></div>`;
+    const res = await fetch(`${API_BASE}/marathon/start`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) { alert(data.error || 'Erro ao iniciar maratona.'); return; }
+    marathonState = { questions:data.questions, currentIndex:0, answers:[], correct:0, selectedOption:null, startedAt:new Date().toISOString(), timerInterval:null, secondsElapsed:0 };
+    const activeArea = document.getElementById('marathon-active-area');
+    const resultsCard = document.getElementById('marathon-results-card');
+    if (introCard) introCard.classList.add('hidden');
+    if (activeArea) activeArea.classList.remove('hidden');
+    if (resultsCard) resultsCard.classList.add('hidden');
+    renderMarathonQuestion(); startMarathonTimer();
+  } catch (e) { alert('Erro ao iniciar maratona: ' + e.message); }
+};
+
+function renderMarathonQuestion() {
+  const q = marathonState.questions[marathonState.currentIndex];
+  if (!q) { finishMarathon(); return; }
+  marathonState.selectedOption = null;
+  const counterEl = document.getElementById('marathon-q-counter');
+  const textEl = document.getElementById('marathon-q-text');
+  const optionsEl = document.getElementById('marathon-q-options');
+  const moduleBadge = document.getElementById('marathon-q-module-badge');
+  if (counterEl) counterEl.textContent = `${marathonState.currentIndex+1} / ${marathonState.questions.length}`;
+  if (textEl) textEl.textContent = q.question_text;
+  if (moduleBadge) moduleBadge.classList.toggle('hidden', q.module !== 'specific');
+  if (optionsEl) {
+    const opts = JSON.parse(q.options||'[]');
+    optionsEl.innerHTML = opts.map(opt => `<li class="option-item" onclick="selectMarathonOption('${opt.replace(/'/g,"\\'")}')" style="padding:0.75rem 1rem;border-radius:8px;cursor:pointer;border:1px solid var(--border-glass);margin-bottom:0.5rem;transition:all 0.2s;"><span>${opt}</span></li>`).join('');
+  }
+}
+
+window.selectMarathonOption = function(option) {
+  marathonState.selectedOption = option;
+  document.querySelectorAll('#marathon-q-options .option-item').forEach(el => {
+    const isSel = el.querySelector('span').textContent === option;
+    el.style.borderColor = isSel ? 'var(--color-primary)' : 'var(--border-glass)';
+    el.style.background = isSel ? 'rgba(139,92,246,0.12)' : 'transparent';
+  });
+};
+
+window.confirmMarathonAnswer = function() {
+  const q = marathonState.questions[marathonState.currentIndex];
+  if (marathonState.selectedOption) {
+    if (q.correct_answer === marathonState.selectedOption) { marathonState.correct++; document.getElementById('marathon-score').textContent = marathonState.correct; }
+    marathonState.answers.push({ questionId:q.id, selectedAnswer:marathonState.selectedOption, responseTime:0 });
+  } else { marathonState.answers.push({ questionId:q.id, selectedAnswer:'', responseTime:0 }); }
+  marathonState.currentIndex++;
+  if (marathonState.currentIndex >= marathonState.questions.length) finishMarathon();
+  else renderMarathonQuestion();
+};
+
+function startMarathonTimer() {
+  clearInterval(marathonState.timerInterval);
+  const timerEl = document.getElementById('marathon-timer');
+  const barEl = document.getElementById('marathon-time-bar');
+  const activeArea = document.getElementById('marathon-active-area');
+  const seasonBadge = document.getElementById('marathon-season-badge');
+  let lastSeasonIdx = -1;
+  marathonState.timerInterval = setInterval(() => {
+    marathonState.secondsElapsed++;
+    const remaining = MARATHON_DURATION - marathonState.secondsElapsed;
+    if (remaining <= 0) { clearInterval(marathonState.timerInterval); finishMarathon(); return; }
+    const h = Math.floor(remaining/3600); const m = Math.floor((remaining%3600)/60); const s = remaining%60;
+    if (timerEl) timerEl.textContent = `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    if (barEl) barEl.style.width = `${(remaining/MARATHON_DURATION)*100}%`;
+    const seasonIdx = Math.min(Math.floor(marathonState.secondsElapsed/3600),3);
+    if (seasonIdx !== lastSeasonIdx) {
+      lastSeasonIdx = seasonIdx;
+      const season = SEASONS[seasonIdx];
+      SEASONS.forEach(s => { if (activeArea) activeArea.classList.remove(s.class); });
+      if (activeArea) activeArea.classList.add(season.class);
+      if (seasonBadge) seasonBadge.textContent = season.badge;
+      if (seasonIdx > 0) {
+        const n = document.createElement('div');
+        n.style.cssText = `position:fixed;top:80px;right:20px;z-index:9998;background:rgba(16,185,129,0.9);color:white;padding:0.75rem 1.25rem;border-radius:12px;font-weight:800;box-shadow:0 4px 20px rgba(16,185,129,0.4);`;
+        n.textContent = `⏱️ ${season.badge} — +100 XP Resistencia!`;
+        document.body.appendChild(n); setTimeout(() => n.remove(), 3000);
+      }
+    }
+  }, 1000);
+}
+
+async function finishMarathon() {
+  clearInterval(marathonState.timerInterval);
+  const activeArea = document.getElementById('marathon-active-area');
+  const resultsCard = document.getElementById('marathon-results-card');
+  if (activeArea) activeArea.classList.add('hidden');
+  try {
+    const res = await fetch(`${API_BASE}/marathon/submit`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ answers:marathonState.answers, startedAt:marathonState.startedAt, finishedAt:new Date().toISOString() })
+    });
+    const result = await res.json();
+    if (resultsCard) {
+      resultsCard.classList.remove('hidden');
+      document.getElementById('marathon-score-general').textContent = result.scoreGeneral.toFixed(1);
+      document.getElementById('marathon-acc-general').textContent = `${result.correctGeneral}/${result.totalGeneral}`;
+      document.getElementById('marathon-score-specific').textContent = result.scoreSpecific.toFixed(1);
+      document.getElementById('marathon-acc-specific').textContent = `${result.correctSpecific}/${result.totalSpecific}`;
+      document.getElementById('marathon-total-score').textContent = `${result.totalScore.toFixed(1)} pts`;
+      const ab = document.getElementById('marathon-approval-badge');
+      const titleEl = document.getElementById('marathon-results-title');
+      const emojiEl = document.getElementById('marathon-results-emoji');
+      if (result.approved) {
+        ab.textContent='Aprovado!'; ab.style.cssText='background:rgba(16,185,129,0.2);color:#10b981;border:1px solid rgba(16,185,129,0.4);padding:0.75rem 2rem;border-radius:9999px;font-weight:800;font-size:1.1rem;display:inline-block;margin-bottom:1.5rem;';
+        if(titleEl) titleEl.textContent='Voce Passou no Simulado!'; if(emojiEl) emojiEl.textContent='🏆'; try{playSound.levelUp();}catch(e){}
+      } else {
+        ab.textContent=`Reprovado (${result.totalScore.toFixed(1)} < 57.5)`; ab.style.cssText='background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);padding:0.75rem 2rem;border-radius:9999px;font-weight:800;font-size:1.1rem;display:inline-block;margin-bottom:1.5rem;';
+        if(titleEl) titleEl.textContent='Continue Treinando!'; if(emojiEl) emojiEl.textContent='📊';
+      }
+    }
+    await loadProfile();
+  } catch (e) { if (resultsCard) { resultsCard.classList.remove('hidden'); resultsCard.innerHTML += `<p style="color:#ef4444;">Erro: ${e.message}</p>`; } }
+}
