@@ -106,6 +106,20 @@
 
       <!-- PAGE: DASHBOARD -->
       <section id="page-dashboard" class="spa-page">
+        <!-- Módulo 3.1: Calibration Banner -->
+        <div class="glass-card hidden" id="calibration-banner" style="background: linear-gradient(135deg, rgba(245, 158, 11, 0.15), rgba(239, 68, 68, 0.15)); border: 1px solid var(--color-warning); padding: 1.25rem 1.5rem; border-radius: 12px; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+          <div style="display: flex; align-items: center; gap: 1rem;">
+            <span style="font-size: 2rem;">🎯</span>
+            <div style="text-align: left;">
+              <h3 style="font-size: 1.15rem; font-weight: 800; color: var(--color-warning); margin-bottom: 0.25rem;">Nivelamento Inicial Pendente</h3>
+              <p style="color: var(--text-main); font-size: 0.9rem; margin: 0;">Sua rede sináptica precisa ser calibrada. Faça o teste de 10 questões para destravar seus estudos livres!</p>
+            </div>
+          </div>
+          <button class="btn btn-warning" onclick="startPlacementTest()" style="font-weight: 800; font-size: 0.95rem; padding: 0.6rem 1.5rem; box-shadow: 0 0 10px rgba(245, 158, 11, 0.35);">
+            <i class="fa-solid fa-graduation-cap"></i> Iniciar Calibragem
+          </button>
+        </div>
+
         <div class="dashboard-grid">
           
           <!-- Left Column (Profile & Subjects) -->
@@ -455,15 +469,61 @@
             </div>
           </div>
 
+          <!-- Módulo 4.1: Priming Panel -->
+          <div id="priming-container" class="hidden" style="max-width: 700px; margin: 1rem auto; display: flex; flex-direction: column; gap: 1.5rem;">
+            <div style="font-size: 1.25rem; font-weight: 700; color: var(--color-warning);"><i class="fa-solid fa-cloud-bolt"></i> Priming Cognitivo: War of Neblina (3 Questões)</div>
+            <div class="glass-card" style="padding: 2rem;">
+              <div id="priming-progress-text" style="font-weight:700; color:var(--text-muted); margin-bottom:0.5rem;">Questão 1 de 3</div>
+              <div id="priming-q-text" style="font-size:1.15rem; font-weight:bold; margin-bottom:1.5rem; line-height:1.6;">Enunciado do Priming...</div>
+              <ul class="options-list" id="priming-q-options" style="list-style: none; padding: 0; margin-bottom:1.5rem;">
+                <!-- Options list items will be injected here -->
+              </ul>
+              <div style="text-align: right;">
+                <button class="btn btn-warning" id="btn-priming-next" onclick="loadNextPrimingQuestion()">
+                  Avançar <i class="fa-solid fa-arrow-right"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
           <!-- LEVEL 1: ACQUISITION / SUMMARY READER -->
           <div id="summary-reader" class="hidden" style="max-width: 700px; margin: 1rem auto; display: flex; flex-direction: column; gap: 1.5rem;">
-            <div style="font-size: 1.25rem; font-weight: 700; color: var(--color-primary-hover);"><i class="fa-solid fa-book-open"></i> Nível 1: Aquisição de Conhecimento</div>
-            <div id="summary-text-content" style="line-height: 1.7; font-size: 1.1rem; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border-glass); padding: 2rem; border-radius: 16px;">
-              <!-- Summary text goes here -->
+            <div style="font-size: 1.25rem; font-weight: 700; color: var(--color-primary-hover);"><i class="fa-solid fa-book-open"></i> Nível 1: Aquisição de Conhecimento (Chunking & Bionic Reading)</div>
+            
+            <div class="glass-card" style="padding: 2rem; position: relative;">
+              <!-- Chunk content -->
+              <div id="summary-text-content" style="line-height: 1.7; font-size: 1.1rem; margin-bottom: 1.5rem; min-height: 120px;">
+                <!-- Summary text goes here -->
+              </div>
+              
+              <!-- Card progress -->
+              <div id="summary-card-progress" style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">Card 1 de 5</div>
+              
+              <!-- Countdown timer -->
+              <div id="summary-timer-indicator" style="font-size: 0.85rem; color: var(--color-warning); font-weight: bold; margin-bottom: 1rem;">Aguarde 10s para avançar...</div>
+
+              <div style="display:flex; justify-content:flex-end;">
+                <button class="btn btn-primary" id="btn-summary-next" onclick="loadNextSummaryCard()" disabled>
+                  Avançar Card <i class="fa-solid fa-arrow-right"></i>
+                </button>
+              </div>
             </div>
-            <button class="btn btn-success" onclick="completeSummarySession()" style="align-self: flex-end;">
-              Concluir Leitura (+5 XP) <i class="fa-solid fa-circle-check"></i>
-            </button>
+
+            <!-- Módulo 4.4 Feynman Validation Area (Initially hidden, revealed on final card) -->
+            <div class="glass-card hidden" id="feynman-card" style="padding: 2rem; border-color: var(--color-primary);">
+              <h4 style="color: var(--color-primary-hover); font-weight: bold; margin-bottom: 0.5rem;"><i class="fa-solid fa-brain"></i> Validação Ativa Feynman</h4>
+              <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 1rem;">
+                Para consolidar seu aprendizado, escreva uma síntese sobre o que você leu (mínimo 50 caracteres).<br>
+                <strong>Restrição:</strong> É proibido copiar/colar texto nesta área (Ctrl+C / Ctrl+V bloqueados).
+              </p>
+              <textarea id="feynman-input" oninput="handleFeynmanInput()" style="width: 100%; height: 100px; background: #000; border: 1px solid var(--border-glass); border-radius: 8px; color: #fff; padding: 0.75rem; font-size: 0.95rem;" placeholder="Escreva o conceito principal com suas próprias palavras..."></textarea>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 0.5rem;">
+                <span style="font-size: 0.8rem; color: var(--text-muted);" id="feynman-char-count">0 / 50 caracteres</span>
+                <button class="btn btn-success" id="btn-feynman-submit" onclick="submitFeynmanAndSolve()" disabled>
+                  Submeter Feynman & Jogar Questões <i class="fa-solid fa-circle-check"></i>
+                </button>
+              </div>
+            </div>
           </div>
 
           <!-- SESSION COMPLETE SCREEN -->
@@ -507,11 +567,13 @@
           <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
             <div>
               <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; font-weight: 600;">Nome da Matéria</label>
-              <input type="text" id="import-subject" placeholder="Ex: Direito Constitucional" style="width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; background: #090d16; border: 1px solid var(--border-glass); color: white; font-family: var(--font-family); font-size: 0.95rem;">
+              <input type="text" id="import-subject" list="existing-subjects-list" placeholder="Ex: Direito Constitucional" style="width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; background: #090d16; border: 1px solid var(--border-glass); color: white; font-family: var(--font-family); font-size: 0.95rem;">
+              <datalist id="existing-subjects-list"></datalist>
             </div>
             <div>
               <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; font-weight: 600;">Nome do Tópico</label>
-              <input type="text" id="import-topic" placeholder="Ex: Direitos Individuais" style="width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; background: #090d16; border: 1px solid var(--border-glass); color: white; font-family: var(--font-family); font-size: 0.95rem;">
+              <input type="text" id="import-topic" list="existing-topics-list" placeholder="Ex: Direitos Individuais" style="width: 100%; padding: 0.6rem 0.8rem; border-radius: 8px; background: #090d16; border: 1px solid var(--border-glass); color: white; font-family: var(--font-family); font-size: 0.95rem;">
+              <datalist id="existing-topics-list"></datalist>
             </div>
             <div>
               <label style="display: block; font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.4rem; font-weight: 600;">Banca Examinadora</label>
@@ -584,9 +646,15 @@
               Cole o seu material de estudo (texto simples, resumos ou questões confiáveis) diretamente no campo abaixo. A nossa IA interna (Gemini) irá processar e criar a jornada completa (resumos, flashcards e questões) diretamente no banco do sistema!
             </p>
             <textarea class="import-textarea" id="direct-material-area" placeholder="Cole aqui o texto do seu material de estudos (resumos, anotações de aulas ou questões de provas anteriores)..."></textarea>
-            <button class="btn btn-primary" id="btn-generate-direct" onclick="generateDirectFromIA()" style="align-self: flex-start;">
+            <div style="display:flex; gap:0.5rem; align-items:center; margin-top:0.75rem;">
+              <input type="file" id="import-file-input" accept=".txt,.md,.json" style="display:none">
+              <button class="btn" id="btn-upload-edital" onclick="uploadEditalFile()" title="Carregar arquivo de edital (.txt/.md)">
+                <i class="fa-solid fa-file-arrow-up"></i> Upload Edital
+              </button>
+              <button class="btn btn-primary" id="btn-generate-direct" onclick="generateDirectFromIA()" style="align-self: flex-start;">
               <i class="fa-solid fa-wand-magic-sparkles"></i> Gerar Jornada com IA do Site
-            </button>
+              </button>
+            </div>
           </div>
 
         </div>
@@ -1022,6 +1090,13 @@
   </div>
 
   <!-- APP LOGIC CLIENT SCRIPTS -->
+
+  <!-- Módulo 7.1: Dead Man's Switch Overlay -->
+  <div id="dead-man-overlay" style="position:fixed; top:0; left:0; width:100vw; height:100vh; background:#000; opacity:0; pointer-events:none; transition:opacity 2s ease; z-index:999999; display:flex; align-items:center; justify-content:center; flex-direction:column;">
+    <div style="font-size:3.5rem; margin-bottom:1rem;">⚠️</div>
+    <h2 style="font-size:1.6rem; font-weight:bold; color:var(--color-warning); margin-bottom:0.5rem;">Detector de Inatividade Severa</h2>
+    <p style="color:var(--text-muted); font-size:0.95rem;">Pressione qualquer tecla ou mova o mouse para retomar imediatamente.</p>
+  </div>
 
   <!-- BLACKOUT MODAL (Tela Preta — Proteção contra o Zero) -->
   <div class="modal-overlay" id="blackout-modal" style="background:rgba(0,0,0,0.97); backdrop-filter:blur(20px);">

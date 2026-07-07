@@ -11,6 +11,7 @@ import {
   getSubjects,
   getTopics,
   importSubjectJSON,
+  importEditalJSON,
   getQuestions,
   getFlashcards,
   submitQuestionAnswer,
@@ -33,6 +34,7 @@ import {
   lockSubject,
   unlockSubject,
   // Multi-profile
+  saveBrainDump,
   listProfiles,
   createProfile,
   switchProfile,
@@ -42,12 +44,19 @@ import {
   checkAndLockCriticalSubjects,
   getSampleQuestion,
   generateMarathon,
-  submitMarathonResult
+  submitMarathonResult,
+  setDiagnosticCompleted,
+  resetDatabase,
+  importHierarchicalEdital,
+  saveShreddedPDF,
+  runGeneratorEngine
 } from './db.js';
 import {
   generateNewQuestions,
   generateGamifiedDataFromText,
-  generateAIStudyDiagnosis
+  generateAIStudyDiagnosis,
+  parseEditalWithIA,
+  shredPDFWithIA
 } from './gemini.js';
 
 dotenv.config();
@@ -56,7 +65,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+// Increase body-parser limits to allow larger edital uploads (10mb)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Serve static frontend files if directory exists
 import path from 'path';
@@ -122,7 +133,7 @@ app.post('/api/subjects/import', async (req, res) => {
   }
 });
 
-// 6. Generate Gamified JSON from text via Gemini (Internal)
+// 6. Generate Gamified JSON from text via Gemini (Internal) - New Hierarchical ETL Ingest (Módulo 4 & 7)
 app.post('/api/subjects/generate-from-text', async (req, res) => {
   try {
     const { text, subjectName, topicName, bancaName, inputType, examDate } = req.body;
@@ -130,26 +141,31 @@ app.post('/api/subjects/generate-from-text', async (req, res) => {
       return res.status(400).json({ error: 'Texto de material muito curto!' });
     }
 
-    const gamifiedData = await generateGamifiedDataFromText(text, subjectName, topicName, bancaName, inputType, examDate);
-    const result = await importSubjectJSON(gamifiedData);
-
-    // Save edital schedule if returned in gamified data
-    if (gamifiedData.schedule && Array.isArray(gamifiedData.schedule)) {
-      const scheduleItems = gamifiedData.schedule.map(item => {
-        const date = new Date();
-        date.setDate(date.getDate() + (item.day - 1));
-        const dateStr = date.toISOString().split('T')[0];
-        return {
-          subject_name: gamifiedData.subject,
-          topic_name: item.topic_name,
-          study_date: dateStr,
-          days_left_indicator: item.day
-        };
+    if (inputType === 'edital') {
+      // Fase 1: Mapeamento do Edital (Árvore de Habilidades & Dependências)
+      const parsedEdital = await parseEditalWithIA(text);
+      const importResult = await importHierarchicalEdital(parsedEdital);
+      
+      res.json({
+        success: true,
+        type: 'edital',
+        message: 'Edital mapeado em Árvore de Dependências e Cronograma gerado com sucesso.',
+        ...importResult
       });
-      await saveStudySchedule(scheduleItems);
+    } else {
+      // Fase 2: Triturador de PDFs (A Transformação via IA)
+      const subject = subjectName || 'Geral';
+      const topic = topicName || 'Geral';
+      const shreddedData = await shredPDFWithIA(text, subject, topic, bancaName || 'Geral');
+      const importResult = await saveShreddedPDF(subject, topic, shreddedData);
+      
+      res.json({
+        success: true,
+        type: 'pdf',
+        message: 'PDF triturado em microdoses cognitivas com sucesso!',
+        ...importResult
+      });
     }
-
-    res.json({ success: true, data: gamifiedData, ...result });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -397,6 +413,9 @@ app.post('/api/study/diagnostic-submit', async (req, res) => {
       return res.status(400).json({ error: 'answers array é obrigatório' });
     }
 
+    const profile = await getProfile();
+    const profileId = profile.id;
+
     const subjectGroups = {};
     answers.forEach(ans => {
       if (!subjectGroups[ans.subjectId]) {
@@ -406,8 +425,6 @@ app.post('/api/study/diagnostic-submit', async (req, res) => {
     });
 
     const calculatedLevels = [];
-    const L_max = 15;
-    const gamma = 1.3;
 
     for (const subId in subjectGroups) {
       const subAnswers = subjectGroups[subId];
@@ -422,22 +439,24 @@ app.post('/api/study/diagnostic-submit', async (req, res) => {
         let w_adjusted = w_i;
         let r_i = ans.isCorrect ? 1 : 0;
 
-        if (ans.isCorrect) {
-          if (ans.confidence === 'Chute') {
-            w_adjusted = w_i / 3;
-          }
+        if (ans.isCorrect && ans.confidence === 'Chute') {
+          w_adjusted = w_i / 3;
         }
 
         sumNumerator += (r_i * w_adjusted);
-        sumDenominator += w_adjusted;
+        sumDenominator += w_i; // PRD: Denominator accumulates real unpenalized weight
       }
 
       const ratio = sumDenominator > 0 ? (sumNumerator / sumDenominator) : 0;
-      const N_0 = Math.max(1, Math.floor(L_max * Math.pow(ratio, gamma)));
+      // Scale ratio (0.0 - 1.0) to level 1 - 50
+      const N_0 = Math.max(1, Math.min(50, Math.round(1 + 49 * ratio)));
 
       await updateSubjectLevel(parseInt(subId), N_0);
       calculatedLevels.push({ subjectId: parseInt(subId), level: N_0 });
     }
+
+    // Set diagnostic_completed = 1 on active profile
+    await setDiagnosticCompleted();
 
     res.json({ success: true, calculatedLevels });
   } catch (error) {
@@ -450,6 +469,17 @@ app.get('/api/study/daily-quests', async (req, res) => {
   try {
     const questsData = await generateDailyQuests();
     res.json(questsData);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 12.12b. Complete Summary
+app.post('/api/study/summary', async (req, res) => {
+  try {
+    const { xp, coins } = req.body;
+    const profileUpdate = await updateXP(xp || 5, coins || 1);
+    res.json({ success: true, profile: profileUpdate });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -520,6 +550,9 @@ app.post('/api/study/brain-dump', async (req, res) => {
     if (!text || text.trim().length === 0) {
       return res.status(400).json({ error: 'Texto é obrigatório' });
     }
+    
+    // Save to database table Pensamentos_Intrusivos (Módulo 7.3)
+    await saveBrainDump(text.trim());
     
     const dumpPath = 'brain_dump.txt';
     const entry = `[${new Date().toISOString()}] ${text}\n`;
@@ -653,6 +686,46 @@ app.post('/api/marathon/submit', async (req, res) => {
       return res.status(400).json({ error: 'answers array é obrigatório' });
     }
     const result = await submitMarathonResult(answers, startedAt, finishedAt);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 12.19. Reset Database
+app.post('/api/study/reset-db', async (req, res) => {
+  try {
+    await resetDatabase();
+    res.json({ success: true, message: 'Banco de dados reiniciado e reconstruído com sucesso.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 12.20. Ingest Edital (Fase 1)
+app.post('/api/study/ingest-edital', async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text || text.trim().length === 0) {
+      return res.status(400).json({ error: 'Conteúdo do edital é obrigatório' });
+    }
+    const parsedData = await parseEditalWithIA(text);
+    const result = await importHierarchicalEdital(parsedData);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 12.21. Ingest PDF (Fase 2)
+app.post('/api/study/ingest-pdf', async (req, res) => {
+  try {
+    const { text, subject, topic, banca } = req.body;
+    if (!text || !subject || !topic) {
+      return res.status(400).json({ error: 'text, subject e topic são obrigatórios' });
+    }
+    const shreddedData = await shredPDFWithIA(text, subject, topic, banca || 'Geral');
+    const result = await saveShreddedPDF(subject, topic, shreddedData);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });

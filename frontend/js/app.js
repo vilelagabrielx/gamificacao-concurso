@@ -101,6 +101,8 @@ window.showPage = function(pageId, extraData = {}) {
     loadDailyQuestsAndStamina();
   } else if (pageId === 'topics' && extraData.subjectId) {
     loadTopics(extraData.subjectId);
+  } else if (pageId === 'import') {
+    loadImportMetadataDropdowns();
   }
 };
 
@@ -153,6 +155,16 @@ async function loadProfile() {
         badge.classList.remove('hidden');
       } else {
         badge.classList.add('hidden');
+      }
+    }
+
+    // Show/hide calibration banner based on completion status
+    const calBanner = document.getElementById('calibration-banner');
+    if (calBanner) {
+      if (data.diagnostic_completed === 0) {
+        calBanner.classList.remove('hidden');
+      } else {
+        calBanner.classList.add('hidden');
       }
     }
 
@@ -242,13 +254,19 @@ async function loadSubjects() {
         card.classList.add('golden-border');
       }
       
+      // Módulo 2.3: Boss Health Ceiling (88% -> 100% Concluído)
+      let displayedMastery = subject.mastery || 0;
+      if (displayedMastery >= 88) {
+        displayedMastery = 100;
+      }
+
       // Determine Stage Tier
       let tierClass = 'tier-aprendiz';
       let tierName = 'Aprendiz';
-      if (subject.mastery >= 85) {
+      if (displayedMastery >= 85) {
         tierClass = 'tier-mestre';
         tierName = 'Mestre';
-      } else if (subject.mastery >= 60) {
+      } else if (displayedMastery >= 60) {
         tierClass = 'tier-competente';
         tierName = 'Competente';
       }
@@ -256,37 +274,40 @@ async function loadSubjects() {
       // Mastery ring dash calculations
       const radius = 25;
       const circumference = 2 * Math.PI * radius;
-      const offset = circumference - (subject.mastery / 100) * circumference;
+      const offset = circumference - (displayedMastery / 100) * circumference;
 
       // Decay Warning
       const decayWarning = subject.decay_applied 
         ? `<div class="subject-decay-warning"><i class="fa-solid fa-triangle-exclamation"></i> Decaimento Aplicado (-${subject.decay_amount}%)</div>` 
         : '';
 
+      const isLockedByEliminacao = state.user && state.user.risco_eliminacao === 1 && subject.module === 'specific';
+
       card.innerHTML = `
-        <div class="subject-main">
+        <div class="subject-main" style="${isLockedByEliminacao ? 'opacity: 0.55;' : ''}">
           <div class="subject-mastery-circle">
             <svg>
               <circle class="bg-ring" cx="30" cy="30" r="${radius}"></circle>
               <circle class="fill-ring" cx="30" cy="30" r="${radius}" 
                 style="stroke-dasharray: ${circumference}; stroke-dashoffset: ${offset};"></circle>
             </svg>
-            <span class="mastery-text">${subject.mastery}%</span>
+            <span class="mastery-text">${displayedMastery}%</span>
           </div>
           <div class="subject-details">
-            <h3>${subject.name} <small style="color: var(--text-muted); font-size: 0.8rem; font-weight: normal;">[${subject.banca || 'Geral'}]</small></h3>
+            <h3>${subject.name} ${displayedMastery === 100 ? '⭐' : ''} <small style="color: var(--text-muted); font-size: 0.8rem; font-weight: normal;">[${subject.banca || 'Geral'}]</small></h3>
             <div style="font-size: 0.85rem; color: var(--color-primary-hover); font-weight: 600; margin-bottom: 0.25rem;">
               Nível ${subject.level || 1} • ${subject.xp || 0} / 1000 XP
             </div>
             <span class="subject-tier ${tierClass}">${tierName}</span>
             ${decayWarning}
+            ${isLockedByEliminacao ? '<div style="color:var(--color-danger); font-size:0.75rem; font-weight:700; margin-top:0.25rem;"><i class="fa-solid fa-lock"></i> BLOQUEADO: Resolva o Risco de Eliminação!</div>' : ''}
           </div>
         </div>
         <div class="subject-actions">
-          <button class="btn btn-primary" onclick="showPage('topics', { subjectId: ${subject.id} })">
+          <button class="btn btn-primary" onclick="showPage('topics', { subjectId: ${subject.id} })" ${isLockedByEliminacao ? 'disabled' : ''}>
             <i class="fa-solid fa-graduation-cap"></i> Trilha
           </button>
-          <button class="btn btn-danger" onclick="startBossFight(${subject.id}, '${subject.name}')">
+          <button class="btn btn-danger" onclick="startBossFight(${subject.id}, '${subject.name}')" ${isLockedByEliminacao ? 'disabled' : ''}>
             <i class="fa-solid fa-skull"></i> Boss Fight
           </button>
         </div>
@@ -295,6 +316,93 @@ async function loadSubjects() {
     });
   } catch (error) {
     console.error('Failed to load subjects:', error);
+  }
+}
+
+async function loadDailyQuestsAndStamina() {
+  try {
+    const res = await fetch(`${API_BASE}/study/daily-quests`);
+    const data = await res.json();
+    
+    // Módulo 6.2: Zeigarnik Limit (slice list to display exactly 3 cards)
+    const quests = (data.quests || []).slice(0, 3);
+    const container = document.getElementById('daily-quests-container');
+    if (container) {
+      container.innerHTML = '';
+      
+      // Módulo 6.4: Friction Lock check (LocalStorage)
+      const frictionLock = localStorage.getItem('friction_vault_lock');
+      let isLocked = false;
+      if (frictionLock) {
+        const lockTime = parseInt(frictionLock);
+        const now = Date.now();
+        if (now - lockTime < 4 * 60 * 60 * 1000) {
+          isLocked = true;
+        } else {
+          localStorage.removeItem('friction_vault_lock');
+        }
+      }
+
+      quests.forEach((q, idx) => {
+        const card = document.createElement('div');
+        card.className = `quest-card ${q.type}-quest`;
+        card.style.cssText = `
+          padding: 1rem;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid var(--border-glass);
+          border-radius: 12px;
+          margin-bottom: 0.75rem;
+          position: relative;
+          transition: all 0.2s;
+        `;
+        
+        // Disable cards B and C if friction lock is active
+        const disableThis = isLocked && (idx === 1 || idx === 2);
+        if (disableThis) {
+          card.style.opacity = '0.3';
+          card.style.pointerEvents = 'none';
+        }
+
+        const isXp = q.rewardType === 'xp';
+        const rewardText = isXp ? `+${q.reward} XP` : `Baú de Recompensas`;
+
+        card.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:0.5rem;">
+            <span style="font-size:0.75rem; text-transform:uppercase; padding:0.2rem 0.5rem; background:rgba(255,255,255,0.07); border-radius:4px; font-weight:700;">Quest ${idx+1}</span>
+            <span style="font-size:0.8rem; color:var(--color-primary); font-weight:700;">${rewardText}</span>
+          </div>
+          <h4 style="font-size:0.95rem; font-weight:700; margin-bottom:0.25rem;">${q.title}</h4>
+          <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem;">${q.desc}</p>
+          ${disableThis ? '<div style="font-size:0.75rem; color:var(--color-danger); font-weight:700;"><i class="fa-solid fa-lock"></i> Trancada por Saída Antecipada (Cofre de Fricção)</div>' : ''}
+          ${q.topicId && !disableThis ? `<button onclick="startStudySession(${q.topicId}, 'questions')" class="btn btn-primary" style="padding:0.4rem 1rem; font-size:0.8rem; margin-top:0.5rem;">Jogar Questão</button>` : ''}
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    // Stamina calculation and visual update
+    const maxStamina = state.user.max_stamina_limit || 20;
+    const staminaLeft = Math.max(0, maxStamina - (state.user.today_stamina_spent || 0));
+    const staminaPct = Math.round((staminaLeft / maxStamina) * 100);
+
+    const staminaText = document.getElementById('stamina-text');
+    const staminaBar = document.getElementById('stamina-bar');
+
+    if (staminaText) staminaText.textContent = `${staminaLeft} / ${maxStamina} Energia`;
+    if (staminaBar) {
+      staminaBar.style.width = `${staminaPct}%`;
+      // Change color based on thresholds
+      if (staminaPct <= 20) {
+        staminaBar.style.backgroundColor = '#ef4444'; // Red
+      } else if (staminaPct <= 50) {
+        staminaBar.style.backgroundColor = '#f59e0b'; // Yellow
+      } else {
+        staminaBar.style.backgroundColor = '#10b981'; // Green
+      }
+    }
+
+  } catch (e) {
+    console.error('loadDailyQuestsAndStamina error:', e);
   }
 }
 
@@ -317,12 +425,17 @@ async function loadTopics(subjectId) {
       topicCard.className = 'glass-card';
       topicCard.style.padding = '1.5rem';
 
+      let displayedTopicMastery = topic.mastery || 0;
+      if (displayedTopicMastery >= 88) {
+        displayedTopicMastery = 100;
+      }
+
       topicCard.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
           <div>
-            <h3 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.25rem;">${topic.name}</h3>
+            <h3 style="font-size: 1.25rem; font-weight: 700; margin-bottom: 0.25rem;">${topic.name} ${displayedTopicMastery === 100 ? '⭐' : ''}</h3>
             <div style="display: flex; gap: 1rem; align-items: center; margin-top: 0.5rem;">
-              <span style="font-size: 0.85rem; font-weight: 500; color: var(--color-primary-hover);">Domínio: ${topic.mastery}%</span>
+              <span style="font-size: 0.85rem; font-weight: 500; color: var(--color-primary-hover);">Domínio: ${displayedTopicMastery}% ${displayedTopicMastery === 100 ? '(Concluído)' : ''}</span>
             </div>
           </div>
           <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
@@ -366,7 +479,39 @@ window.refreshAIDiagnosis = async function() {
 
 // STUDY SESSION ENGINE (Nível 1, 2, 3)
 window.startStudySession = async function(topicId, type) {
+  // Módulo 3.1: Lock de Disciplina
+  if (state.user && state.user.diagnostic_completed === 0) {
+    alert("⚠️ Acesso Bloqueado: Conclua o teste de calibragem inicial no topo do painel antes de acessar os estudos livres.");
+    showPage('dashboard');
+    return;
+  }
+
+  // Módulo 2.2: Hard Reset Blocker Rule
+  if (state.user && state.user.risco_eliminacao === 1) {
+    try {
+      const resSub = await fetch(`${API_BASE}/subjects`);
+      const subjects = await resSub.json();
+      let subjectOfTopic = null;
+      for (const s of subjects) {
+        const tRes = await fetch(`${API_BASE}/subjects/${s.id}/topics`);
+        const tData = await tRes.json();
+        if (tData.topics && tData.topics.some(t => t.id === topicId)) {
+          subjectOfTopic = s;
+          break;
+        }
+      }
+      if (subjectOfTopic && subjectOfTopic.module === 'specific') {
+        alert("🚨 Bloqueio Ativo: Você possui disciplinas do Módulo I com domínio abaixo de 15%. Resolva o Hard Reset na tela inicial primeiro!");
+        showPage('dashboard');
+        return;
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
   playSound.click();
+  const isSingle = state.currentSession ? state.currentSession.singleQuestionSession : false;
   state.currentSession = {
     type,
     items: [],
@@ -378,7 +523,9 @@ window.startStudySession = async function(topicId, type) {
     timer: null,
     timeRemaining: 60,
     selectedOption: null,
-    answered: false
+    answered: false,
+    lives: 3,
+    singleQuestionSession: isSingle
   };
 
   // Reset UI panels
@@ -388,6 +535,8 @@ window.startStudySession = async function(topicId, type) {
   document.getElementById('question-solver').classList.add('hidden');
   document.getElementById('summary-reader').classList.add('hidden');
   document.getElementById('session-complete').classList.add('hidden');
+  const livesContainer = document.getElementById('study-lives-container');
+  if (livesContainer) livesContainer.classList.add('hidden');
 
   showPage('study');
 
@@ -412,8 +561,24 @@ window.startStudySession = async function(topicId, type) {
         }
       }
       
-      document.getElementById('summary-text-content').innerHTML = summaryContent || 'Resumo não disponível para este tópico.';
-      document.getElementById('summary-reader').classList.remove('hidden');
+      // Módulo 4.1: Fetch 3 questions for priming
+      const questionsRes = await fetch(`${API_BASE}/study/questions?topicId=${topicId}&count=3`);
+      const questions = await questionsRes.json();
+      
+      document.getElementById('btn-summary-next').style.display = 'inline-block';
+
+      if (questions && questions.length > 0) {
+        state.primingSession = {
+          questions: questions.slice(0, 3),
+          currentIndex: 0,
+          topicId,
+          summaryContent
+        };
+        renderPrimingQuestion(0);
+      } else {
+        // Go straight to summary chunking
+        startSummaryCardFlow(topicId, summaryContent);
+      }
     } catch (e) {
       console.error(e);
     }
@@ -451,6 +616,10 @@ window.startStudySession = async function(topicId, type) {
         return;
       }
       
+      const lc = document.getElementById('study-lives-container');
+      if (lc) lc.classList.remove('hidden');
+      updateLivesHearts();
+
       state.currentSession.items = questions;
       loadQuestion(0);
       document.getElementById('question-solver').classList.remove('hidden');
@@ -638,24 +807,43 @@ function resetTimer() {
   const timerText = document.getElementById('study-timer-text');
   const timerBar = document.getElementById('study-timer-bar');
   
-  timerText.textContent = '60s';
-  timerBar.style.width = '100%';
-  timerBar.style.backgroundColor = 'var(--color-warning)';
+  const isTdah = state.user && state.user.tdah_mode === 1;
+  if (timerText) {
+    if (isTdah) {
+      timerText.style.display = 'none';
+    } else {
+      timerText.style.display = 'inline';
+      timerText.textContent = '60s';
+    }
+  }
+  
+  if (timerBar) {
+    timerBar.style.width = '100%';
+    timerBar.style.backgroundColor = '#10b981'; // Green
+  }
 
   state.currentSession.timer = setInterval(() => {
+    if (state.currentSession.paused) return;
     state.currentSession.timeRemaining--;
-    timerText.textContent = `${state.currentSession.timeRemaining}s`;
+    if (timerText && !isTdah) {
+      timerText.textContent = `${state.currentSession.timeRemaining}s`;
+    }
     
     const pct = (state.currentSession.timeRemaining / 60) * 100;
-    timerBar.style.width = `${pct}%`;
-
-    if (state.currentSession.timeRemaining <= 15) {
-      timerBar.style.backgroundColor = 'var(--color-danger)';
+    if (timerBar) {
+      timerBar.style.width = `${pct}%`;
+      
+      if (state.currentSession.timeRemaining <= 15) {
+        timerBar.style.backgroundColor = '#ef4444'; // Red
+      } else if (state.currentSession.timeRemaining <= 30) {
+        timerBar.style.backgroundColor = '#f59e0b'; // Yellow
+      } else {
+        timerBar.style.backgroundColor = '#10b981'; // Green
+      }
     }
 
     if (state.currentSession.timeRemaining <= 0) {
       clearInterval(state.currentSession.timer);
-      // Auto submit incorrect due to timeout
       autoSubmitTimeout();
     }
   }, 1000);
@@ -694,6 +882,19 @@ async function submitAnswer() {
   const q = state.currentSession.items[state.currentSession.currentIndex];
   const timeTaken = Math.round((Date.now() - state.currentSession.startTime) / 1000);
   const isTdah = state.user && state.user.tdah_mode === 1;
+
+  if (isTdah) {
+    if (timeTaken < 5) {
+      state.consecutiveSpeedAnswers = (state.consecutiveSpeedAnswers || 0) + 1;
+      if (state.consecutiveSpeedAnswers >= 3) {
+        state.consecutiveSpeedAnswers = 0;
+        // Trigger interoceptive pause in the next tick to avoid blocking fetch UI updates
+        setTimeout(() => { triggerHardResetInteroceptivo(); }, 50);
+      }
+    } else {
+      state.consecutiveSpeedAnswers = 0;
+    }
+  }
 
   try {
     const res = await fetch(`${API_BASE}/study/answer`, {
@@ -742,10 +943,19 @@ async function submitAnswer() {
         if (comboContainer) comboContainer.classList.add('hidden');
         
         try {
-          playSound.click(); 
+          playSound.deflate(); 
         } catch (e) {}
       } else {
         playSound.wrong();
+      }
+
+      if (state.currentSession.lives !== undefined) {
+        state.currentSession.lives -= 1;
+        updateLivesHearts();
+        if (state.currentSession.lives <= 0) {
+          triggerDefeatScreen();
+          return;
+        }
       }
 
       state.consecutiveIncorrectAnswers = (state.consecutiveIncorrectAnswers || 0) + 1;
@@ -842,7 +1052,9 @@ window.loadNextQuestion = function() {
   playSound.click();
   const nextIdx = state.currentSession.currentIndex + 1;
   
-  if (nextIdx < state.currentSession.items.length) {
+  if (state.currentSession.singleQuestionSession) {
+    finishStudySession();
+  } else if (nextIdx < state.currentSession.items.length) {
     loadQuestion(nextIdx);
   } else {
     finishStudySession();
@@ -1059,6 +1271,13 @@ window.quitStudySession = function() {
   clearInterval(state.currentSession.timer);
   playSound.click();
   if (confirm('Deseja realmente sair? Você perderá o progresso não finalizado desta sessão.')) {
+    // Módulo 6.4: Cofre de Fricção write check
+    if (state.currentSession) {
+      if (state.currentSession.type === 'questions' || state.currentSession.type === 'boss_fight' || state.currentSession.type === 'encounter') {
+        localStorage.setItem('friction_vault_lock', Date.now().toString());
+        alert("🔒 Cofre de Fricção Ativo: Desistência precoce registrada. Os desafios diários B e C estão bloqueados por 4 horas.");
+      }
+    }
     showPage('dashboard');
   } else {
     // Resume timer if questions
@@ -1571,6 +1790,54 @@ window.submitReplenishExternalJSON = async function() {
   }
 };
 
+// Upload/Edital helper: open file picker and submit file content as edital
+window.uploadEditalFile = function() {
+  const input = document.getElementById('import-file-input');
+  if (input) input.click();
+  playSound.click();
+};
+
+document.addEventListener('DOMContentLoaded', () => {
+  const fileInput = document.getElementById('import-file-input');
+  if (fileInput) {
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = async function(evt) {
+        const text = evt.target.result || '';
+        // Ensure import type is edital
+        const typeSelect = document.getElementById('import-type');
+        if (typeSelect) typeSelect.value = 'edital';
+
+        // Ensure subject has at least a default value
+        const subjectInput = document.getElementById('import-subject');
+        if (subjectInput && subjectInput.value.trim().length === 0) {
+          subjectInput.value = 'Edital';
+        }
+
+        // Populate direct material area and switch to Direct IA tab
+        const directArea = document.getElementById('direct-material-area');
+        if (directArea) directArea.value = text;
+        if (typeof switchImportTab === 'function') {
+          try { switchImportTab('direct-ia'); } catch (e) { /* ignore */ }
+        }
+
+        // Trigger generation automatically
+        try {
+          await generateDirectFromIA();
+        } catch (err) {
+          console.error('Erro ao gerar a jornada a partir do arquivo:', err);
+          alert('Erro ao processar o arquivo. Tente colar o texto manualmente.');
+        }
+      };
+      reader.readAsText(file);
+      // reset value so same file can be uploaded again
+      e.target.value = '';
+    });
+  }
+});
+
 // SHOP LOGIC
 window.buyItem = async function(item) {
   playSound.click();
@@ -1887,27 +2154,36 @@ state.deadManTimer = null;
 
 window.resetDeadManSwitch = function() {
   if (state.deadManTimer) clearTimeout(state.deadManTimer);
-  document.body.style.transition = 'filter 0.5s';
-  document.body.style.filter = 'none';
+  
+  const overlay = document.getElementById('dead-man-overlay');
+  if (overlay) {
+    overlay.style.opacity = '0';
+    overlay.style.pointerEvents = 'none';
+  }
 
   const isTdah = state.user && state.user.tdah_mode === 1;
   if (!isTdah || !state.currentSession || state.currentSession.answered) return;
 
   state.deadManTimer = setTimeout(() => {
-    document.body.style.transition = 'filter 5s linear';
-    document.body.style.filter = 'brightness(0.08)';
+    if (overlay) {
+      overlay.style.opacity = '0.95';
+      overlay.style.pointerEvents = 'auto';
+    }
     stopBrownNoise();
   }, 45000); 
 };
 
-document.addEventListener('mousemove', () => {
+const handleUserRescueActivity = () => {
   if (state.user && state.user.tdah_mode === 1 && state.currentSession && !state.currentSession.answered) {
     resetDeadManSwitch();
     if (state.brownNoiseActive && !noiseNode) {
       startBrownNoise();
     }
   }
-});
+};
+
+document.addEventListener('mousemove', handleUserRescueActivity);
+document.addEventListener('keydown', handleUserRescueActivity);
 
 
 // 5. Press and Hold (UI Cinestésica)
@@ -2006,7 +2282,6 @@ window.triggerHardResetInteroceptivo = function() {
 };
 
 
-// 8. TDAH Visual Garden (Jardim de Evolução)
 window.renderTDAHGarden = function(subjects) {
   const grid = document.getElementById('tdah-garden-grid');
   if (!grid) return;
@@ -2022,42 +2297,74 @@ window.renderTDAHGarden = function(subjects) {
     card.className = 'glass-card';
     card.style.padding = '1rem';
     card.style.textAlign = 'center';
+    card.style.position = 'relative';
 
     let plantEmoji = '🌱';
-    let statusText = 'Crescendo (Estudado)';
+    let statusText = 'Semente';
+    let statusColor = '#60a5fa';
+    let showPurifyBtn = false;
+
+    const status = sub.status_plantacao || 'semente';
     
-    const mastery = sub.mastery || 50;
-    if (mastery >= 90) {
-      plantEmoji = '🌳';
-      statusText = 'Árvore Madura (Frutificando)';
-    } else if (mastery >= 70) {
-      plantEmoji = '🌿';
-      statusText = 'Arbusto Saudável';
-    } else if (mastery >= 40) {
+    if (status === 'semente') {
       plantEmoji = '🌱';
-      statusText = 'Brotando';
-    } else {
+      statusText = 'Semente Sináptica';
+      statusColor = '#60a5fa';
+    } else if (status === 'saudavel') {
+      plantEmoji = '🌿';
+      statusText = 'Planta Saudável';
+      statusColor = '#10b981';
+    } else if (status === 'murcha') {
       plantEmoji = '🥀';
-      statusText = 'Secando (Ervas Daninhas!)';
+      statusText = 'Planta Murcha';
+      statusColor = '#f59e0b';
+      showPurifyBtn = true;
+    } else if (status === 'morta') {
+      plantEmoji = '💀';
+      statusText = 'Planta Morta';
+      statusColor = '#ef4444';
+      showPurifyBtn = true;
     }
 
     card.innerHTML = `
       <div style="font-size: 2.8rem; animation: bounce 2s infinite alternate;">${plantEmoji}</div>
       <div style="font-weight: bold; font-size: 0.9rem; margin-top: 0.5rem; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">${sub.name}</div>
-      <small style="color: var(--text-muted); font-size: 0.75rem;">Nível ${sub.level || 1} • ${mastery}% Domínio</small>
-      <div style="font-size: 0.7rem; color: ${mastery < 40 ? '#ef4444' : '#10b981'}; font-weight: bold; margin-top: 0.25rem;">${statusText}</div>
+      <small style="color: var(--text-muted); font-size: 0.75rem;">Nível ${sub.level || 1} • ${sub.mastery || 0}% Domínio</small>
+      <div style="font-size: 0.7rem; color: ${statusColor}; font-weight: bold; margin-top: 0.25rem; text-transform: uppercase;">${statusText}</div>
+      ${showPurifyBtn ? `<button class="btn btn-danger" onclick="purifyPlantSubject(${sub.id}, '${sub.name.replace(/'/g, "\\'")}')" style="width:100%; font-size:0.7rem; padding:0.3rem; margin-top:0.5rem;"><i class="fa-solid fa-wand-magic-sparkles"></i> Purificar (10 Qs)</button>` : ''}
     `;
 
     grid.appendChild(card);
   });
 };
 
+window.purifyPlantSubject = async function(subjectId, subjectName) {
+  playSound.click();
+  if (!confirm(`Deseja iniciar o treino de purificação de 10 questões para a matéria '${subjectName}'?`)) return;
+  try {
+    const res = await fetch(`${API_BASE}/subjects/${subjectId}/topics`);
+    const topicsData = await res.json();
+    if (!topicsData.topics || topicsData.topics.length === 0) {
+      alert("Esta matéria não possui tópicos cadastrados.");
+      return;
+    }
+    const topicId = topicsData.topics[0].id;
+    await startStudySession(topicId, 'questions');
+    
+    const qRes = await fetch(`${API_BASE}/study/questions?topicId=${topicId}`);
+    let questions = await qRes.json();
+    state.currentSession.items = questions.slice(0, 10);
+    loadQuestion(0);
+    
+  } catch(e) {
+    alert("Erro ao iniciar purificação: " + e.message);
+  }
+};
+
 
 // 9. Initial Placement Test (Nivelamento) controllers
 window.skipPlacementTest = function() {
-  document.getElementById('edital-config-modal').classList.remove('active');
-  playSound.click();
-  showPage('dashboard');
+  alert("⚠️ Lock Ativo: O teste de nivelamento diagnóstico é obrigatório e não pode ser pulado.");
 };
 
 window.confirmEditalConfig = function() {
@@ -2449,7 +2756,7 @@ window.submitCreateProfile = async function() {
 // ============================
 // HARD RESET (TELA PRETA)
 // ============================
-let hardResetState = { currentSubjectId: null, currentQuestion: null, selectedAnswer: null, timerInterval: null };
+let hardResetState = { currentSubjectId: null, currentQuestion: null, selectedAnswer: null, timerInterval: null, survivalQuestionsSolved: 0 };
 
 async function checkCriticalLock() {
   try {
@@ -2521,12 +2828,23 @@ async function submitHardResetResult(isCorrect) {
   const modal = document.getElementById('hard-reset-modal');
   if (modal) modal.classList.remove('active');
   if (isCorrect) {
-    await fetch(`${API_BASE}/study/unlock-subject`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ subjectId: hardResetState.currentSubjectId }) });
-    alert('Hard Reset bem-sucedido! Materia desbloqueada.');
-    try { playSound.levelUp(); } catch(e) {}
-    await loadProfile(); await loadSubjects();
+    hardResetState.survivalQuestionsSolved += 1;
+    try { playSound.success(); } catch(e) {}
+    
+    if (hardResetState.survivalQuestionsSolved >= 3) {
+      await fetch(`${API_BASE}/study/unlock-subject`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ subjectId: hardResetState.currentSubjectId }) });
+      alert('🔒 Sobrevivência Confirmada! Hard Reset concluído com sucesso e matérias desbloqueadas.');
+      try { playSound.levelUp(); } catch(e) {}
+      hardResetState.survivalQuestionsSolved = 0;
+      await loadProfile(); await loadSubjects();
+    } else {
+      alert(`Resposta correta! (${hardResetState.survivalQuestionsSolved}/3). Resolva a próxima.`);
+      triggerHardReset();
+    }
   } else {
-    alert('Hard Reset falhou. A materia permanece bloqueada.');
+    alert('Resposta incorreta ou tempo esgotado! Hard Reset reiniciado.');
+    hardResetState.survivalQuestionsSolved = 0;
+    const bm = document.getElementById('blackout-modal'); if (bm) bm.classList.add('active');
   }
 }
 
@@ -2545,7 +2863,10 @@ function initCodeReader(question) {
   codeReaderState.keyLineIndex = question.key_line_index ?? Math.floor(codeLines.length/2);
   codeReaderState.holdProgress = 0; codeReaderState.revealed = false;
   panel.classList.remove('hidden');
-  if (optionsList) optionsList.style.opacity = '0.1';
+  if (optionsList) {
+    optionsList.style.opacity = '0';
+    optionsList.style.pointerEvents = 'none';
+  }
   container.innerHTML = codeLines.map((line, idx) => `<div class="code-line" id="code-line-${idx}" onmousedown="startCodeHold(${idx})" ontouchstart="startCodeHold(${idx})" onmouseup="stopCodeHold(${idx})" ontouchend="stopCodeHold(${idx})" onmouseleave="stopCodeHold(${idx})"><span class="code-line-number">${idx+1}</span><span class="code-line-text">${line}</span>${idx===codeReaderState.keyLineIndex?'<span style="margin-left:auto;font-size:0.7rem;color:var(--color-warning);">← segure</span>':''}</div>`).join('');
 }
 
@@ -2562,7 +2883,12 @@ window.startCodeHold = function(lineIdx) {
     if (barFill) barFill.style.width = p+'%'; if (pct) pct.textContent = p+'%';
     if (codeReaderState.holdProgress >= 100) {
       clearInterval(codeReaderState.holdInterval); codeReaderState.revealed = true;
-      const ol = document.getElementById('q-options'); if (ol) { ol.style.opacity='1'; ol.style.transition='opacity 0.4s'; }
+      const ol = document.getElementById('q-options'); 
+      if (ol) { 
+        ol.style.opacity='1'; 
+        ol.style.pointerEvents='auto';
+        ol.style.transition='opacity 0.4s'; 
+      }
       if (lineEl) lineEl.classList.remove('holding');
       if (barFill) barFill.style.background = '#10b981';
       if (pct) pct.textContent = 'Desbloqueado!';
@@ -2710,3 +3036,310 @@ async function finishMarathon() {
     await loadProfile();
   } catch (e) { if (resultsCard) { resultsCard.classList.remove('hidden'); resultsCard.innerHTML += `<p style="color:#ef4444;">Erro: ${e.message}</p>`; } }
 }
+
+// ============================
+// MÓDULO 4: LEARNING TRAIL (JUST-IN-TIME THEORY) HELPERS
+// ============================
+
+window.loadNextPrimingQuestion = function() {
+  const session = state.primingSession;
+  if (!session) return;
+  
+  session.currentIndex += 1;
+  if (session.currentIndex < 3 && session.currentIndex < session.questions.length) {
+    renderPrimingQuestion(session.currentIndex);
+  } else {
+    // Transition to summary card view!
+    document.getElementById('priming-container').classList.add('hidden');
+    startSummaryCardFlow(session.topicId, session.summaryContent);
+  }
+};
+
+window.renderPrimingQuestion = function(idx) {
+  const q = state.primingSession.questions[idx];
+  document.getElementById('priming-progress-text').textContent = `Questão de Priming ${idx + 1} de 3`;
+  document.getElementById('priming-q-text').textContent = q.question_text;
+  
+  const options = JSON.parse(q.options || '[]');
+  const container = document.getElementById('priming-q-options');
+  container.innerHTML = '';
+  options.forEach(opt => {
+    const li = document.createElement('li');
+    li.className = 'option-item';
+    li.innerHTML = `<span>${opt}</span>`;
+    li.onclick = () => {
+      document.querySelectorAll('#priming-q-options .option-item').forEach(x => x.classList.remove('selected'));
+      li.classList.add('selected');
+    };
+    container.appendChild(li);
+  });
+  
+  document.getElementById('priming-container').classList.remove('hidden');
+};
+
+window.applyBionicReadingFilter = function(text) {
+  if (!text) return '';
+  return text.split(/\s+/).map(word => {
+    const cleanWord = word.replace(/<[^>]*>/g, '').replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"");
+    if (cleanWord.length > 3) {
+      const prefix = word.substring(0, 3);
+      const suffix = word.substring(3);
+      return `<strong>${prefix}</strong>${suffix}`;
+    }
+    return word;
+  }).join(' ');
+};
+
+window.startSummaryCardFlow = function(topicId, summaryText) {
+  state.summarySession = {
+    topicId,
+    chunks: [],
+    currentIndex: 0,
+    timer: null
+  };
+  
+  let chunks = [];
+  try {
+    const trimmed = (summaryText || '').trim();
+    if (trimmed.startsWith('[')) {
+      chunks = JSON.parse(trimmed);
+    }
+  } catch (e) {
+    // fallback to slicing plain string
+  }
+  
+  if (!chunks || chunks.length === 0) {
+    const cleanText = (summaryText || '').replace(/<[^>]*>/g, '').trim();
+    let index = 0;
+    while (index < cleanText.length) {
+      chunks.push(cleanText.substring(index, index + 300));
+      index += 300;
+    }
+  }
+  
+  if (chunks.length === 0) chunks.push("Material de estudos em processamento.");
+  state.summarySession.chunks = chunks;
+  
+  document.getElementById('summary-reader').classList.remove('hidden');
+  document.getElementById('feynman-card').classList.add('hidden');
+  
+  loadSummaryCard(0);
+};
+
+window.loadSummaryCard = function(idx) {
+  const session = state.summarySession;
+  session.currentIndex = idx;
+  
+  const chunkText = session.chunks[idx];
+  const bionicText = applyBionicReadingFilter(chunkText);
+  
+  document.getElementById('summary-text-content').innerHTML = bionicText;
+  document.getElementById('summary-card-progress').textContent = `Card ${idx + 1} de ${session.chunks.length}`;
+  
+  const btnNext = document.getElementById('btn-summary-next');
+  const timerInd = document.getElementById('summary-timer-indicator');
+  
+  btnNext.disabled = true;
+  
+  let countdown = 10;
+  timerInd.textContent = `Aguarde ${countdown}s para avançar...`;
+  timerInd.style.display = 'block';
+  
+  clearInterval(session.timer);
+  session.timer = setInterval(() => {
+    countdown -= 1;
+    timerInd.textContent = `Aguarde ${countdown}s para avançar...`;
+    
+    if (countdown <= 0) {
+      clearInterval(session.timer);
+      timerInd.style.display = 'none';
+      btnNext.disabled = false;
+    }
+  }, 1000);
+};
+
+window.loadNextSummaryCard = function() {
+  const session = state.summarySession;
+  if (!session) return;
+  
+  const nextIdx = session.currentIndex + 1;
+  if (nextIdx < session.chunks.length) {
+    loadSummaryCard(nextIdx);
+  } else {
+    document.getElementById('feynman-card').classList.remove('hidden');
+    document.getElementById('btn-summary-next').style.display = 'none';
+    
+    const input = document.getElementById('feynman-input');
+    input.value = '';
+    document.getElementById('feynman-char-count').textContent = '0 / 50 caracteres';
+    document.getElementById('btn-feynman-submit').disabled = true;
+    input.focus();
+    
+    input.onpaste = (e) => {
+      e.preventDefault();
+      alert('🔒 Restrição Cognitiva: Digitar força a codificação de memória. Não cole o resumo!');
+    };
+    input.oncopy = (e) => e.preventDefault();
+    input.oncut = (e) => e.preventDefault();
+  }
+};
+
+window.handleFeynmanInput = function() {
+  const val = document.getElementById('feynman-input').value;
+  const count = val.length;
+  const counter = document.getElementById('feynman-char-count');
+  const submitBtn = document.getElementById('btn-feynman-submit');
+  
+  counter.textContent = `${count} / 50 caracteres`;
+  if (count >= 50) {
+    counter.style.color = 'var(--color-success)';
+    submitBtn.disabled = false;
+  } else {
+    counter.style.color = 'var(--text-muted)';
+    submitBtn.disabled = true;
+  }
+};
+
+window.submitFeynmanAndSolve = async function() {
+  playSound.success();
+  const session = state.summarySession;
+  if (!session) return;
+  
+  try {
+    await fetch(`${API_BASE}/study/summary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ xp: 5, coins: 1 })
+    });
+  } catch(e) {
+    console.error(e);
+  }
+  
+  clearInterval(session.timer);
+  alert("📝 Feynman validado com sucesso! Redirecionando diretamente para a bateria de questões.");
+  startStudySession(session.topicId, 'questions');
+};
+
+// ============================
+// MÓDULO 5: LIVES & DEFEAT ENGINE HELPERS
+// ============================
+
+window.updateLivesHearts = function() {
+  const lives = state.currentSession.lives ?? 3;
+  for (let i = 1; i <= 3; i++) {
+    const heart = document.getElementById(`life-heart-${i}`);
+    if (heart) {
+      heart.style.opacity = (i <= lives) ? '1' : '0.15';
+    }
+  }
+};
+
+window.triggerDefeatScreen = function() {
+  clearInterval(state.currentSession.timer);
+  playSound.wrong();
+  
+  document.getElementById('question-solver').classList.add('hidden');
+  document.getElementById('session-complete').classList.remove('hidden');
+  
+  document.getElementById('session-complete-subtext').textContent = 'Suas vidas acabaram. Esta bateria de estudos foi abortada!';
+  document.getElementById('completed-xp-reward').textContent = '0 XP';
+  document.getElementById('completed-coins-reward').textContent = '0';
+  document.getElementById('completed-xp-reward').style.color = '#ef4444';
+  document.getElementById('completed-coins-reward').style.color = '#ef4444';
+  
+  const header = document.querySelector('#session-complete h2');
+  if (header) {
+    header.textContent = 'Derrotado!';
+    header.style.color = '#ef4444';
+  }
+  
+  const emoji = document.querySelector('#session-complete div');
+  if (emoji) {
+    emoji.textContent = '💀';
+  }
+  
+  const bonuses = document.getElementById('session-bonuses');
+  if (bonuses) bonuses.innerHTML = '<span style="color:#ef4444; font-weight:700;">Nenhuma recompensa liberada.</span>';
+};
+
+window.playTDAHIgnitionQuestion = async function() {
+  playSound.click();
+  try {
+    const res = await fetch(`${API_BASE}/subjects`);
+    const subjects = await res.json();
+    if (!subjects || subjects.length === 0) {
+      alert("Nenhuma matéria cadastrada ainda. Por favor, adicione uma matéria primeiro.");
+      return;
+    }
+    
+    // Find subject with lowest mastery
+    const worstSubject = subjects.reduce((prev, curr) => (prev.mastery < curr.mastery) ? prev : curr);
+    
+    // Fetch topics of that subject
+    const topicsRes = await fetch(`${API_BASE}/subjects/${worstSubject.id}/topics`);
+    const topicsData = await topicsRes.json();
+    if (!topicsData.topics || topicsData.topics.length === 0) {
+      alert(`Matéria '${worstSubject.name}' não possui tópicos cadastrados ainda.`);
+      return;
+    }
+    
+    // Find topic with lowest mastery
+    const worstTopic = topicsData.topics.reduce((prev, curr) => (prev.mastery < curr.mastery) ? prev : curr);
+    
+    // Start questions session for that topic
+    await startStudySession(worstTopic.id, 'questions');
+    
+    // Mark as a single question session
+    state.currentSession.singleQuestionSession = true;
+    
+  } catch (e) {
+    console.error('Error starting TDAH ignition:', e);
+    alert('Erro ao carregar a questão de ignição: ' + e.message);
+  }
+};
+
+let existingSubjectsList = [];
+
+window.loadImportMetadataDropdowns = async function() {
+  try {
+    const res = await fetch(`${API_BASE}/subjects`);
+    existingSubjectsList = await res.json();
+    
+    const subjectDatalist = document.getElementById('existing-subjects-list');
+    if (subjectDatalist) {
+      subjectDatalist.innerHTML = existingSubjectsList.map(s => `<option value="${s.name}"></option>`).join('');
+    }
+  } catch (error) {
+    console.error('Failed to load subjects for import auto-suggest datalist:', error);
+  }
+};
+
+// Bind auto-complete topic suggestion when a subject is typed or chosen
+document.addEventListener('DOMContentLoaded', () => {
+  const subjectInput = document.getElementById('import-subject');
+  const topicDatalist = document.getElementById('existing-topics-list');
+  
+  if (subjectInput && topicDatalist) {
+    subjectInput.addEventListener('input', async () => {
+      const typedVal = subjectInput.value.trim();
+      const matched = existingSubjectsList.find(s => s.name.toLowerCase() === typedVal.toLowerCase());
+      
+      if (matched) {
+        try {
+          const res = await fetch(`${API_BASE}/subjects/${matched.id}/topics`);
+          const data = await res.json();
+          if (data && Array.isArray(data.topics)) {
+            topicDatalist.innerHTML = data.topics.map(t => `<option value="${t.nome || t.name}"></option>`).join('');
+          } else {
+            topicDatalist.innerHTML = '';
+          }
+        } catch (e) {
+          console.error('Failed to load topics auto-suggest for matched subject:', e);
+          topicDatalist.innerHTML = '';
+        }
+      } else {
+        topicDatalist.innerHTML = '';
+      }
+    });
+  }
+});

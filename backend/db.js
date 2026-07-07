@@ -2,6 +2,7 @@ import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { generateAdaptiveQuestions } from './gemini.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dbPath = path.join(__dirname, 'data.db');
@@ -47,7 +48,9 @@ export async function initDB() {
       locked_subjects TEXT DEFAULT '[]',
       max_stamina_limit INTEGER DEFAULT 20,
       today_stamina_spent INTEGER DEFAULT 0,
-      burned_out INTEGER DEFAULT 0
+      burned_out INTEGER DEFAULT 0,
+      risco_eliminacao INTEGER DEFAULT 0,
+      diagnostic_completed INTEGER DEFAULT 0
     )
   `);
 
@@ -65,7 +68,77 @@ export async function initDB() {
     )
   `);
 
-  // Create subjects table with profile_id
+  // ============================
+  // PRD TABLE: Disciplinas
+  // ============================
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS Disciplinas (
+      id_disciplina INTEGER PRIMARY KEY AUTOINCREMENT,
+      nome TEXT NOT NULL,
+      peso_edital REAL DEFAULT 1.0,
+      xp_acumulado INTEGER DEFAULT 0,
+      nivel_atual INTEGER DEFAULT 1,
+      profile_id INTEGER DEFAULT 1,
+      module TEXT DEFAULT 'general',
+      consecutive_answers INTEGER DEFAULT 0,
+      last_studied_at TEXT,
+      created_at TEXT,
+      banca TEXT DEFAULT 'Geral'
+    )
+  `);
+
+  // ============================
+  // PRD TABLE: Topicos
+  // ============================
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS Topicos (
+      id_topico INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_disciplina INTEGER,
+      nome TEXT NOT NULL,
+      percentual_dominio REAL DEFAULT 0.0,
+      data_ultima_revisao TEXT,
+      status_plantacao TEXT DEFAULT 'semente',
+      summary TEXT,
+      id_topico_pai INTEGER DEFAULT NULL,
+      requisito_id INTEGER DEFAULT NULL,
+      keywords_feynman TEXT DEFAULT NULL,
+      FOREIGN KEY(id_disciplina) REFERENCES Disciplinas(id_disciplina) ON DELETE CASCADE,
+      FOREIGN KEY(id_topico_pai) REFERENCES Topicos(id_topico) ON DELETE SET NULL,
+      FOREIGN KEY(requisito_id) REFERENCES Topicos(id_topico) ON DELETE SET NULL
+    )
+  `);
+
+  // ============================
+  // PRD TABLE: Log_Questoes
+  // ============================
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS Log_Questoes (
+      id_log INTEGER PRIMARY KEY AUTOINCREMENT,
+      id_topico INTEGER,
+      acertou INTEGER,
+      tempo_resposta_segundos INTEGER,
+      nivel_certeza INTEGER,
+      answered_at TEXT,
+      profile_id INTEGER DEFAULT 1,
+      question_id INTEGER,
+      confidence TEXT DEFAULT 'Certeza Absoluta',
+      weight_applied REAL DEFAULT 1.0,
+      FOREIGN KEY(id_topico) REFERENCES Topicos(id_topico) ON DELETE CASCADE
+    )
+  `);
+
+  // ============================
+  // PRD TABLE: Pensamentos_Intrusivos
+  // ============================
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS Pensamentos_Intrusivos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      pensamento TEXT,
+      created_at TEXT
+    )
+  `);
+
+  // Create legacy subjects table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS subjects (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +150,7 @@ export async function initDB() {
     )
   `);
 
-  // Create topics table
+  // Create legacy topics table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS topics (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -99,7 +172,7 @@ export async function initDB() {
       back TEXT,
       box INTEGER DEFAULT 1,
       next_review_date TEXT,
-      FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
+      FOREIGN KEY(topic_id) REFERENCES Topicos(id_topico) ON DELETE CASCADE
     )
   `);
 
@@ -121,11 +194,11 @@ export async function initDB() {
       correct_count INTEGER DEFAULT 0,
       incorrect_count INTEGER DEFAULT 0,
       last_answered_at TEXT,
-      FOREIGN KEY(topic_id) REFERENCES topics(id) ON DELETE CASCADE
+      FOREIGN KEY(topic_id) REFERENCES Topicos(id_topico) ON DELETE CASCADE
     )
   `);
 
-  // Create answers history table
+  // Create legacy answers history table
   await db.exec(`
     CREATE TABLE IF NOT EXISTS answers_history (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,6 +240,47 @@ export async function initDB() {
   `);
 
   // ============================
+  // DATA MIGRATION LOGIC (LEGACY -> PRD)
+  // ============================
+  try {
+    const tableExists = await db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='subjects'");
+    if (tableExists) {
+      await db.exec(`
+        INSERT OR IGNORE INTO Disciplinas (id_disciplina, nome, peso_edital, xp_acumulado, nivel_atual, profile_id, module, consecutive_answers, last_studied_at, created_at, banca)
+        SELECT id, name, weight, xp, level, profile_id, module, consecutive_answers, last_studied_at, created_at, banca FROM subjects
+      `);
+    }
+  } catch (e) {
+    console.warn("Migration to Disciplinas skipped or already done:", e.message);
+  }
+
+  try {
+    const tableExists = await db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='topics'");
+    if (tableExists) {
+      await db.exec(`
+        INSERT OR IGNORE INTO Topicos (id_topico, id_disciplina, nome, percentual_dominio, data_ultima_revisao, status_plantacao, summary)
+        SELECT id, subject_id, name, mastery, last_studied_at, 'semente', summary FROM topics
+      `);
+    }
+  } catch (e) {
+    console.warn("Migration to Topicos skipped or already done:", e.message);
+  }
+
+  try {
+    const tableExists = await db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='answers_history'");
+    if (tableExists) {
+      await db.exec(`
+        INSERT OR IGNORE INTO Log_Questoes (id_log, id_topico, acertou, tempo_resposta_segundos, nivel_certeza, answered_at, profile_id, question_id, confidence, weight_applied)
+        SELECT id, (SELECT topic_id FROM questions WHERE id = question_id), is_correct, response_time_seconds, 
+               (CASE WHEN confidence='Chute' THEN 1 WHEN confidence='Dúvida' THEN 2 ELSE 3 END), answered_at, profile_id, question_id, confidence, weight_applied 
+        FROM answers_history
+      `);
+    }
+  } catch (e) {
+    console.warn("Migration to Log_Questoes skipped or already done:", e.message);
+  }
+
+  // ============================
   // MIGRATIONS for existing DBs
   // ============================
   const migrations = [
@@ -190,7 +304,11 @@ export async function initDB() {
     "ALTER TABLE user_profile ADD COLUMN locked_subjects TEXT DEFAULT '[]'",
     "ALTER TABLE user_profile ADD COLUMN max_stamina_limit INTEGER DEFAULT 20",
     "ALTER TABLE user_profile ADD COLUMN today_stamina_spent INTEGER DEFAULT 0",
-    "ALTER TABLE user_profile ADD COLUMN burned_out INTEGER DEFAULT 0"
+    "ALTER TABLE user_profile ADD COLUMN burned_out INTEGER DEFAULT 0",
+    "ALTER TABLE user_profile ADD COLUMN risco_eliminacao INTEGER DEFAULT 0",
+    "ALTER TABLE user_profile ADD COLUMN diagnostic_completed INTEGER DEFAULT 0",
+    "ALTER TABLE profiles ADD COLUMN risco_eliminacao INTEGER DEFAULT 0",
+    "ALTER TABLE profiles ADD COLUMN diagnostic_completed INTEGER DEFAULT 0"
   ];
   for (const sql of migrations) {
     try { await db.run(sql); } catch (e) { /* already exists */ }
@@ -226,14 +344,32 @@ export async function initDB() {
     }
   }
 
-  // Populate mock data if database has no subjects at all
-  const subjectCount = await db.get('SELECT COUNT(*) as count FROM subjects');
+  // Populate mock data if database has no Disciplinas at all
+  const subjectCount = await db.get('SELECT COUNT(*) as count FROM Disciplinas');
   if (subjectCount.count === 0) {
     await populateMockData();
   }
 
   console.log('Database initialized successfully.');
   return db;
+}
+
+export async function resetDatabase() {
+  await db.run('DROP TABLE IF EXISTS answers_history');
+  await db.run('DROP TABLE IF EXISTS Log_Questoes');
+  await db.run('DROP TABLE IF EXISTS flashcards');
+  await db.run('DROP TABLE IF EXISTS questions');
+  await db.run('DROP TABLE IF EXISTS study_schedule');
+  await db.run('DROP TABLE IF EXISTS marathon_results');
+  await db.run('DROP TABLE IF EXISTS Topicos');
+  await db.run('DROP TABLE IF EXISTS Disciplinas');
+  await db.run('DROP TABLE IF EXISTS profiles');
+  await db.run('DROP TABLE IF EXISTS user_profile');
+  await db.run('DROP TABLE IF EXISTS app_settings');
+  await db.run('DROP TABLE IF EXISTS Pensamentos_Intrusivos');
+  await db.run('DROP TABLE IF EXISTS subjects');
+  await db.run('DROP TABLE IF EXISTS topics');
+  await initDB();
 }
 
 // ============================
@@ -302,25 +438,39 @@ export async function updateProfileMeta(profileId, { name, avatarEmoji, examName
 async function populateMockData() {
   const now = new Date().toISOString();
   
-  // Insert Subject with default banca
+  // Insert Subject into Disciplinas (PRD Table)
   const subjectResult = await db.run(
-    'INSERT INTO subjects (name, mastery, last_studied_at, created_at, xp, level, banca) VALUES (?, ?, ?, ?, 0, 1, ?)',
-    ['Direito Constitucional', 0, now, now, 'FCC']
+    'INSERT INTO Disciplinas (profile_id, nome, peso_edital, xp_acumulado, nivel_atual, banca, module, created_at, last_studied_at) VALUES (1, ?, 1.0, 0, 1, ?, "general", ?, ?)',
+    ['Direito Constitucional', 'FCC', now, now]
   );
   const subjectId = subjectResult.lastID;
 
-  // Insert Topic
+  // Insert Topic into Topicos (PRD Table)
   const topicResult = await db.run(
-    'INSERT INTO topics (subject_id, name, summary, mastery, last_studied_at) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO Topicos (id_disciplina, nome, summary, percentual_dominio, data_ultima_revisao, status_plantacao) VALUES (?, ?, ?, 0.0, ?, ?)',
     [
       subjectId,
       'Direitos Individuais e Coletivos',
       'O Artigo 5º da CF/88 trata dos direitos individuais e coletivos. Princípios essenciais: igualdade de gênero, proibição de tortura, liberdade de expressão (vedado o anonimato), inviolabilidade do domicílio (salvo flagrante delito, desastre, prestar socorro, ou determinação judicial durante o dia), sigilo de correspondência e remédios constitucionais.',
-      0,
-      now
+      now,
+      'semente'
     ]
   );
   const topicId = topicResult.lastID;
+
+  // Also populate legacy subjects and topics tables for full compatibility
+  try {
+    await db.run(
+      'INSERT INTO subjects (id, name, mastery, last_studied_at, created_at, xp, level, banca, profile_id, weight, module, consecutive_answers) VALUES (?, ?, 0, ?, ?, 0, 1, ?, 1, 1.0, "general", 0)',
+      [subjectId, 'Direito Constitucional', now, now, 'FCC']
+    );
+    await db.run(
+      'INSERT INTO topics (id, subject_id, name, summary, mastery, last_studied_at) VALUES (?, ?, ?, ?, 0, ?)',
+      [topicId, subjectId, 'Direitos Individuais e Coletivos', 'O Artigo 5º da CF/88 trata dos direitos individuais e coletivos.', now]
+    );
+  } catch(err) {
+    // ignore
+  }
 
   // Insert Flashcards
   const flashcards = [
@@ -393,7 +543,26 @@ export async function getProfile() {
   const profile = await db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
   if (!profile) {
     // Fallback: return first profile
-    return await db.get('SELECT * FROM profiles LIMIT 1');
+    const fallback = await db.get('SELECT * FROM profiles LIMIT 1');
+    if (!fallback) return null;
+    return {
+      ...fallback,
+      id: fallback.id,
+      username: fallback.name,
+      tdah_mode: fallback.tdah_mode || 0,
+      mental_fog: fallback.mental_fog || 0,
+      locked_subjects: fallback.locked_subjects || '[]',
+      max_stamina_limit: fallback.max_stamina_limit || 20,
+      today_stamina_spent: fallback.today_stamina_spent || 0,
+      burned_out: fallback.burned_out || 0,
+      streak_count: fallback.streak_count || 0,
+      shield_count: fallback.shield_count || 0,
+      exam_name: fallback.exam_name || '',
+      exam_date: fallback.exam_date || '',
+      avatar_emoji: fallback.avatar_emoji || '👑',
+      risco_eliminacao: fallback.risco_eliminacao || 0,
+      diagnostic_completed: fallback.diagnostic_completed || 0
+    };
   }
   // Map fields to legacy shape expected by frontend
   return {
@@ -410,7 +579,9 @@ export async function getProfile() {
     shield_count: profile.shield_count || 0,
     exam_name: profile.exam_name || '',
     exam_date: profile.exam_date || '',
-    avatar_emoji: profile.avatar_emoji || '👑'
+    avatar_emoji: profile.avatar_emoji || '👑',
+    risco_eliminacao: profile.risco_eliminacao || 0,
+    diagnostic_completed: profile.diagnostic_completed || 0
   };
 }
 
@@ -419,7 +590,7 @@ export async function updateXP(xpGained, coinsGained, subjectId = null) {
   const profile = await getProfile();
   
   // Calculate Synergy Buff
-  const subjectsList = await db.all('SELECT level FROM subjects');
+  const subjectsList = await db.all('SELECT nivel_atual as level FROM Disciplinas WHERE profile_id = ?', [profileId]);
   const synergyActive = subjectsList.length > 0 && subjectsList.every(s => (s.level || 1) >= 10);
   const synergyMultiplier = synergyActive ? 1.2 : 1.0;
 
@@ -432,7 +603,7 @@ export async function updateXP(xpGained, coinsGained, subjectId = null) {
   let subjectLeveledUp = false;
 
   if (subjectId) {
-    const subject = await db.get('SELECT xp, level, name, weight, consecutive_answers FROM subjects WHERE id = ?', [subjectId]);
+    const subject = await db.get('SELECT xp_acumulado as xp, nivel_atual as level, nome as name, peso_edital as weight, consecutive_answers FROM Disciplinas WHERE id_disciplina = ?', [subjectId]);
     if (subject) {
       subjectName = subject.name;
       consecutiveAnswers = (subject.consecutive_answers || 0);
@@ -450,7 +621,7 @@ export async function updateXP(xpGained, coinsGained, subjectId = null) {
       
       // Increment fatigue counter
       consecutiveAnswers += 1;
-      await db.run('UPDATE subjects SET consecutive_answers = ? WHERE id = ?', [consecutiveAnswers, subjectId]);
+      await db.run('UPDATE Disciplinas SET consecutive_answers = ? WHERE id_disciplina = ?', [consecutiveAnswers, subjectId]);
 
       // Subject Level up logic
       newSubjectXp = (subject.xp || 0) + finalXpGained;
@@ -460,13 +631,20 @@ export async function updateXP(xpGained, coinsGained, subjectId = null) {
       if (newSubjectXp >= subXpNeeded) {
         newSubjectXp -= subXpNeeded;
         newSubjectLevel += 1;
-        subjectLeveledUp = true;
-        await db.run('UPDATE user_profile SET coins = coins + 50 WHERE id = ?', [profile.id]);
-        profile.coins += 50;
+        
+        // Cap level at 50
+        if (newSubjectLevel > 50) {
+          newSubjectLevel = 50;
+          newSubjectXp = subXpNeeded; 
+        } else {
+          subjectLeveledUp = true;
+          await db.run('UPDATE profiles SET coins = coins + 50 WHERE id = ?', [profile.id]);
+          profile.coins += 50;
+        }
       }
 
       await db.run(
-        'UPDATE subjects SET xp = ?, level = ? WHERE id = ?',
+        'UPDATE Disciplinas SET xp_acumulado = ?, nivel_atual = ? WHERE id_disciplina = ?',
         [newSubjectXp, newSubjectLevel, subjectId]
       );
     }
@@ -576,24 +754,66 @@ export async function buyShield() {
 // MASTERY CALCULATION USING EBBINGHAUS DECAY
 export async function getSubjects() {
   const profileId = await getActiveProfileId();
-  const subjects = await db.all('SELECT * FROM subjects WHERE profile_id = ?', [profileId]);
+  const subjects = await db.all('SELECT * FROM Disciplinas WHERE profile_id = ?', [profileId]);
+
+  let anyCriticalMod1 = false;
 
   for (const subject of subjects) {
-    const topics = await db.all('SELECT * FROM topics WHERE subject_id = ?', [subject.id]);
+    const topics = await db.all('SELECT * FROM Topicos WHERE id_disciplina = ?', [subject.id_disciplina]);
     let totalTopicMastery = 0;
 
     for (const topic of topics) {
-      const topicMastery = await calculateTopicMastery(topic.id);
+      const topicMastery = await calculateTopicMastery(topic.id_topico);
       totalTopicMastery += topicMastery;
       
-      await db.run('UPDATE topics SET mastery = ? WHERE id = ?', [topicMastery, topic.id]);
+      // Calculate dias_inativos for status_plantacao
+      let daysInactive = 999;
+      if (topic.data_ultima_revisao) {
+        const lastDate = new Date(topic.data_ultima_revisao);
+        const now = new Date();
+        const diffTime = Math.abs(now - lastDate);
+        daysInactive = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      }
+
+      let statusPlantacao = 'semente';
+      if (topic.data_ultima_revisao) {
+        if (daysInactive < 3) {
+          statusPlantacao = 'saudavel';
+        } else if (daysInactive < 7) {
+          statusPlantacao = 'murcha';
+        } else {
+          statusPlantacao = 'morta';
+        }
+      }
+
+      await db.run('UPDATE Topicos SET percentual_dominio = ?, status_plantacao = ? WHERE id_topico = ?', [topicMastery, statusPlantacao, topic.id_topico]);
     }
 
     const calculatedMastery = topics.length > 0 ? Math.round(totalTopicMastery / topics.length) : 0;
     const finalMastery = Math.max(0, calculatedMastery);
 
-    await db.run('UPDATE subjects SET mastery = ? WHERE id = ?', [finalMastery, subject.id]);
+    await db.run('UPDATE Disciplinas SET last_studied_at = (SELECT MAX(data_ultima_revisao) FROM Topicos WHERE id_disciplina = ?) WHERE id_disciplina = ?', [subject.id_disciplina, subject.id_disciplina]);
+    
+    // Map fields to legacy names for frontend
+    subject.id = subject.id_disciplina;
+    subject.name = subject.nome;
+    subject.weight = subject.peso_edital;
+    subject.xp = subject.xp_acumulado;
+    subject.level = subject.nivel_atual;
     subject.mastery = finalMastery;
+
+    // Módulo 2.2: Hard Reset Blocker Rule
+    // "Se o percentual_dominio de qualquer disciplina do Módulo I cair abaixo de 15%, acionar a FLAG risco_eliminacao = TRUE."
+    // Módulo I subjects are 'general'
+    if (subject.module === 'general' && finalMastery < 15 && subject.last_studied_at !== null) {
+      anyCriticalMod1 = true;
+    }
+  }
+
+  if (anyCriticalMod1) {
+    await db.run('UPDATE profiles SET risco_eliminacao = 1 WHERE id = ?', [profileId]);
+  } else {
+    await db.run('UPDATE profiles SET risco_eliminacao = 0 WHERE id = ?', [profileId]);
   }
 
   return subjects;
@@ -602,7 +822,14 @@ export async function getSubjects() {
 export async function getTopics(subjectId) {
   const subjects = await getSubjects();
   const subject = subjects.find(s => s.id === parseInt(subjectId));
-  const topics = await db.all('SELECT * FROM topics WHERE subject_id = ?', [subjectId]);
+  const topics = await db.all('SELECT * FROM Topicos WHERE id_disciplina = ?', [subjectId]);
+  
+  // Map fields to legacy names for frontend
+  topics.forEach(t => {
+    t.id = t.id_topico;
+    t.mastery = t.percentual_dominio;
+  });
+
   return { subject, topics };
 }
 
@@ -613,32 +840,44 @@ async function calculateTopicMastery(topicId) {
   const questionIds = questions.map(q => q.id);
   const placeHolders = questionIds.map(() => '?').join(',');
 
-  // Get the last 20 answers
-  const lastAnswers = await db.all(
-    `SELECT is_correct 
-     FROM answers_history 
-     WHERE question_id IN (${placeHolders}) 
-     ORDER BY answered_at DESC LIMIT 20`,
-    [...questionIds]
+  // Get correct rate Ta in the last 30 days
+  const last30Days = await db.get(
+    `SELECT COUNT(*) as total, SUM(acertou) as correct 
+     FROM Log_Questoes 
+     WHERE id_topico = ? AND answered_at >= datetime('now', '-30 days')`,
+    [topicId]
   );
+  
+  let Ta = 0;
+  if (last30Days && last30Days.total > 0) {
+    Ta = (last30Days.correct / last30Days.total) * 100;
+  } else {
+    // Fallback to historical all-time rate
+    const historical = await db.get(
+      `SELECT COUNT(*) as total, SUM(acertou) as correct 
+       FROM Log_Questoes 
+       WHERE id_topico = ?`,
+      [topicId]
+    );
+    if (historical && historical.total > 0) {
+      Ta = (historical.correct / historical.total) * 100;
+    } else {
+      Ta = 0;
+    }
+  }
 
-  if (lastAnswers.length === 0) return 0;
-
-  const correctAnswers = lastAnswers.filter(a => a.is_correct === 1).length;
-  const baseRate = (correctAnswers / lastAnswers.length) * 100;
-
-  // Calculate days since last studied
-  const topic = await db.get('SELECT last_studied_at FROM topics WHERE id = ?', [topicId]);
+  // Calculate days since last studied (data_ultima_revisao)
+  const topic = await db.get('SELECT data_ultima_revisao FROM Topicos WHERE id_topico = ?', [topicId]);
   let daysSince = 0;
-  if (topic && topic.last_studied_at) {
-    const lastDate = new Date(topic.last_studied_at);
+  if (topic && topic.data_ultima_revisao) {
+    const lastDate = new Date(topic.data_ultima_revisao);
     const now = new Date();
     const diffTime = Math.abs(now - lastDate);
     daysSince = Math.floor(diffTime / (1000 * 60 * 60 * 24));
   }
 
   const decayFactor = Math.pow(0.97, daysSince);
-  const realMastery = Math.round(baseRate * decayFactor);
+  const realMastery = Math.round(Ta * decayFactor);
 
   return Math.max(0, Math.min(100, realMastery));
 }
@@ -651,23 +890,23 @@ export async function importSubjectJSON(data) {
   const moduleType = data.module || 'general'; // 'general' or 'specific'
   
   // 1. Insert or get subject for this profile
-  let subject = await db.get('SELECT id FROM subjects WHERE name = ? AND profile_id = ?', [data.subject, profileId]);
+  let subject = await db.get('SELECT id_disciplina FROM Disciplinas WHERE nome = ? AND profile_id = ?', [data.subject, profileId]);
   let subjectId;
   if (!subject) {
     const result = await db.run(
-      'INSERT INTO subjects (profile_id, name, mastery, last_studied_at, created_at, xp, level, banca, module) VALUES (?, ?, 0, ?, ?, 0, 1, ?, ?)',
-      [profileId, data.subject, now, now, bancaName, moduleType]
+      'INSERT INTO Disciplinas (profile_id, nome, peso_edital, xp_acumulado, nivel_atual, banca, module, created_at, last_studied_at) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?)',
+      [profileId, data.subject, moduleType === 'specific' ? 2.5 : 1.0, bancaName, moduleType, now, now]
     );
     subjectId = result.lastID;
   } else {
-    subjectId = subject.id;
-    await db.run('UPDATE subjects SET last_studied_at = ?, banca = ?, module = ? WHERE id = ?', [now, bancaName, moduleType, subjectId]);
+    subjectId = subject.id_disciplina;
+    await db.run('UPDATE Disciplinas SET last_studied_at = ?, banca = ?, module = ? WHERE id_disciplina = ?', [now, bancaName, moduleType, subjectId]);
   }
 
   // 2. Insert topic
   const topicResult = await db.run(
-    'INSERT INTO topics (subject_id, name, summary, mastery, last_studied_at) VALUES (?, ?, ?, 0, ?)',
-    [subjectId, data.topic, data.summary, now]
+    'INSERT INTO Topicos (id_disciplina, nome, summary, percentual_dominio, data_ultima_revisao, status_plantacao) VALUES (?, ?, ?, 0, ?, ?)',
+    [subjectId, data.topic, data.summary, now, 'semente']
   );
   const topicId = topicResult.lastID;
 
@@ -711,12 +950,188 @@ export async function importSubjectJSON(data) {
   return { subjectId, topicId };
 }
 
+// IMPORT EDITAL: suporta múltiplos tópicos e múltiplas matérias em um único payload
+export async function importEditalJSON(data) {
+  const now = new Date().toISOString();
+  const profileId = await getActiveProfileId();
+  const bancaName = data.banca || 'Geral';
+
+  // Caso o payload já venha com várias matérias
+  if (Array.isArray(data.subjects) && data.subjects.length > 0) {
+    const created = [];
+    for (const subj of data.subjects) {
+      const subjName = subj.subject || subj.name || 'Matéria';
+      let subjectRow = await db.get('SELECT id_disciplina FROM Disciplinas WHERE nome = ? AND profile_id = ?', [subjName, profileId]);
+      let subjectId;
+      if (!subjectRow) {
+        const r = await db.run(
+          'INSERT INTO Disciplinas (profile_id, nome, peso_edital, xp_acumulado, nivel_atual, banca, module, created_at, last_studied_at) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?)',
+          [profileId, subjName, subj.module === 'specific' ? 2.5 : 1.0, bancaName, subj.module || 'general', now, now]
+        );
+        subjectId = r.lastID;
+      } else {
+        subjectId = subjectRow.id_disciplina;
+        await db.run('UPDATE Disciplinas SET last_studied_at = ?, banca = ? WHERE id_disciplina = ?', [now, bancaName, subjectId]);
+      }
+
+      // Inserir tópicos se existirem
+      if (Array.isArray(subj.topics)) {
+        for (const t of subj.topics) {
+          const topicName = t.topic || t.name || 'Tópico';
+          const summary = t.summary || t.summary_text || '';
+          const topicRes = await db.run(
+            'INSERT INTO Topicos (id_disciplina, nome, summary, percentual_dominio, data_ultima_revisao, status_plantacao) VALUES (?, ?, ?, 0, ?, ?)',
+            [subjectId, topicName, summary, now, 'semente']
+          );
+          const topicId = topicRes.lastID;
+
+          if (Array.isArray(t.flashcards)) {
+            const today = new Date().toISOString().split('T')[0];
+            for (const fc of t.flashcards) {
+              await db.run('INSERT INTO flashcards (topic_id, front, back, box, next_review_date) VALUES (?, ?, ?, 1, ?)', [topicId, fc.front, fc.back, today]);
+            }
+          }
+
+          if (Array.isArray(t.questions)) {
+            for (const q of t.questions) {
+              await db.run(
+                'INSERT INTO questions (topic_id, question_text, options, correct_answer, explanation, difficulty, source, module, type, code_lines, key_line_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [
+                  topicId,
+                  q.question,
+                  JSON.stringify(q.options || []),
+                  q.correct_answer || '',
+                  q.explanation || '',
+                  q.difficulty || 'Medium',
+                  'imported',
+                  q.module || (subj.module || 'general'),
+                  q.type || 'text',
+                  q.code_lines ? JSON.stringify(q.code_lines) : null,
+                  q.key_line_index !== undefined ? q.key_line_index : null
+                ]
+              );
+            }
+          }
+        }
+      }
+
+      created.push({ subject: subjName });
+    }
+
+    return { createdCount: created.length };
+  }
+
+  // Caso venha um único objeto com topics[] ou schedule[]
+  const subjectName = data.subject || 'Edital';
+  let subjectRow = await db.get('SELECT id_disciplina FROM Disciplinas WHERE nome = ? AND profile_id = ?', [subjectName, profileId]);
+  let subjectId;
+  if (!subjectRow) {
+    const r = await db.run(
+      'INSERT INTO Disciplinas (profile_id, nome, peso_edital, xp_acumulado, nivel_atual, banca, module, created_at, last_studied_at) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?)',
+      [profileId, subjectName, data.module === 'specific' ? 2.5 : 1.0, bancaName, data.module || 'general', now, now]
+    );
+    subjectId = r.lastID;
+  } else {
+    subjectId = subjectRow.id_disciplina;
+    await db.run('UPDATE Disciplinas SET last_studied_at = ?, banca = ? WHERE id_disciplina = ?', [now, bancaName, subjectId]);
+  }
+
+  const createdTopics = [];
+
+  if (Array.isArray(data.topics) && data.topics.length > 0) {
+    for (const t of data.topics) {
+      const topicName = t.topic || t.name || 'Tópico';
+      const summary = t.summary || '';
+      const topicRes = await db.run('INSERT INTO Topicos (id_disciplina, nome, summary, percentual_dominio, data_ultima_revisao, status_plantacao) VALUES (?, ?, ?, 0, ?, ?)', [subjectId, topicName, summary, now, 'semente']);
+      const topicId = topicRes.lastID;
+
+      if (Array.isArray(t.flashcards)) {
+        const today = new Date().toISOString().split('T')[0];
+        for (const fc of t.flashcards) {
+          await db.run('INSERT INTO flashcards (topic_id, front, back, box, next_review_date) VALUES (?, ?, ?, 1, ?)', [topicId, fc.front, fc.back, today]);
+        }
+      }
+
+      if (Array.isArray(t.questions)) {
+        for (const q of t.questions) {
+          await db.run(
+            'INSERT INTO questions (topic_id, question_text, options, correct_answer, explanation, difficulty, source, module, type, code_lines, key_line_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [
+              topicId,
+              q.question,
+              JSON.stringify(q.options || []),
+              q.correct_answer || '',
+              q.explanation || '',
+              q.difficulty || 'Medium',
+              'imported',
+              q.module || data.module || 'general',
+              q.type || 'text',
+              q.code_lines ? JSON.stringify(q.code_lines) : null,
+              q.key_line_index !== undefined ? q.key_line_index : null
+            ]
+          );
+        }
+      }
+
+      createdTopics.push(topicName);
+    }
+  } else if (Array.isArray(data.schedule) && data.schedule.length > 0) {
+    for (const s of data.schedule) {
+      const topicName = s.topic_name || s.topic || 'Tópico do Edital';
+      const topicRes = await db.run('INSERT INTO Topicos (id_disciplina, nome, summary, percentual_dominio, data_ultima_revisao, status_plantacao) VALUES (?, ?, ?, 0, ?, ?)', [subjectId, topicName, s.summary || '', now, 'semente']);
+      createdTopics.push(topicName);
+    }
+  } else {
+    // Fallback: use importSubjectJSON for single-topic payloads
+    return await importSubjectJSON(data);
+  }
+
+  return { subjectId, topicsCreated: createdTopics.length, topics: createdTopics };
+}
+
 // STUDY INTERACTIONS
 export async function getQuestions(topicId, count = 5) {
-  return await db.all(
+  // Módulo 5.5: Intercalação Forçada
+  const topic = await db.get('SELECT id_disciplina FROM Topicos WHERE id_topico = ?', [topicId]);
+  let isRedes = false;
+  let subjectId = null;
+  if (topic) {
+    subjectId = topic.id_disciplina;
+    const subject = await db.get('SELECT nome FROM Disciplinas WHERE id_disciplina = ?', [subjectId]);
+    if (subject && subject.nome.toLowerCase().includes('redes')) {
+      isRedes = true;
+    }
+  }
+
+  let finalCount = count;
+  let questions = await db.all(
     'SELECT * FROM questions WHERE topic_id = ? ORDER BY RANDOM() LIMIT ?',
-    [topicId, count]
+    [topicId, finalCount]
   );
+
+  if (isRedes && questions.length > 0) {
+    const profileId = await getActiveProfileId();
+    const otherQuestions = await db.all(
+      `SELECT q.* 
+       FROM questions q
+       JOIN Topicos t ON q.topic_id = t.id_topico
+       JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
+       WHERE s.id_disciplina != ? AND s.profile_id = ? AND t.percentual_dominio < 60
+       ORDER BY RANDOM() LIMIT 2`,
+      [subjectId, profileId]
+    );
+
+    if (otherQuestions.length > 0) {
+      if (questions.length >= 5 && otherQuestions[0]) {
+        questions.splice(4, 0, otherQuestions[0]);
+      }
+      if (questions.length >= 10 && otherQuestions[1]) {
+        questions.splice(9, 0, otherQuestions[1]);
+      }
+    }
+  }
+
+  return questions;
 }
 
 export async function getFlashcards(topicId) {
@@ -731,8 +1146,8 @@ export async function getAllQuestionsCount(subjectId) {
   const countObj = await db.get(
     `SELECT COUNT(*) as count 
      FROM questions q 
-     JOIN topics t ON q.topic_id = t.id 
-     WHERE t.subject_id = ?`,
+     JOIN Topicos t ON q.topic_id = t.id_topico 
+     WHERE t.id_disciplina = ?`,
     [subjectId]
   );
   return countObj.count;
@@ -740,10 +1155,10 @@ export async function getAllQuestionsCount(subjectId) {
 
 export async function getRandomEncounter() {
   const questions = await db.all(
-    `SELECT q.*, t.name as topic_name, s.name as subject_name 
+    `SELECT q.*, t.nome as topic_name, s.nome as subject_name 
      FROM questions q 
-     JOIN topics t ON q.topic_id = t.id 
-     JOIN subjects s ON t.subject_id = s.id 
+     JOIN Topicos t ON q.topic_id = t.id_topico 
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
      ORDER BY RANDOM() LIMIT 3`
   );
   return questions;
@@ -751,10 +1166,10 @@ export async function getRandomEncounter() {
 
 export async function getBossFight(subjectId) {
   const questions = await db.all(
-    `SELECT q.*, t.name as topic_name 
+    `SELECT q.*, t.nome as topic_name 
      FROM questions q 
-     JOIN topics t ON q.topic_id = t.id 
-     WHERE t.subject_id = ? 
+     JOIN Topicos t ON q.topic_id = t.id_topico 
+     WHERE t.id_disciplina = ? 
      ORDER BY RANDOM() LIMIT 10`,
     [subjectId]
   );
@@ -773,12 +1188,12 @@ export async function getInterleavedSession(count = 10) {
 
   // 1. Get Bosses/Redemption (previously incorrect)
   const bossQuestions = await db.all(
-    `SELECT q.*, t.name as topic_name, s.name as subject_name
+    `SELECT q.*, t.nome as topic_name, s.nome as subject_name
      FROM questions q
-     JOIN topics t ON q.topic_id = t.id
-     JOIN subjects s ON t.subject_id = s.id
+     JOIN Topicos t ON q.topic_id = t.id_topico
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
      WHERE q.id IN (
-       SELECT question_id FROM answers_history WHERE is_correct = 0
+       SELECT question_id FROM Log_Questoes WHERE acertou = 0
      )
      ORDER BY RANDOM() LIMIT ?`,
     [bossCount]
@@ -790,15 +1205,15 @@ export async function getInterleavedSession(count = 10) {
   });
 
   // 2. Get Spaced Repetition (topics with mastery < 70%)
-  const lowMasteryTopics = await db.all('SELECT id FROM topics WHERE mastery < 70 AND mastery > 0');
+  const lowMasteryTopics = await db.all('SELECT id_topico as id FROM Topicos WHERE percentual_dominio < 70 AND percentual_dominio > 0');
   if (lowMasteryTopics.length > 0) {
     const topicIds = lowMasteryTopics.map(t => t.id);
     const placeholders = topicIds.map(() => '?').join(',');
     const srQuestions = await db.all(
-      `SELECT q.*, t.name as topic_name, s.name as subject_name
+      `SELECT q.*, t.nome as topic_name, s.nome as subject_name
        FROM questions q
-       JOIN topics t ON q.topic_id = t.id
-       JOIN subjects s ON t.subject_id = s.id
+       JOIN Topicos t ON q.topic_id = t.id_topico
+       JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
        WHERE q.topic_id IN (${placeholders}) AND q.id NOT IN (${Array.from(addedIds).map(() => '?').join(',') || 'NULL'})
        ORDER BY RANDOM() LIMIT ?`,
       [...topicIds, ...Array.from(addedIds), srCount]
@@ -811,10 +1226,10 @@ export async function getInterleavedSession(count = 10) {
 
   // 3. Get New questions (correct_count + incorrect_count = 0)
   const newQuestions = await db.all(
-    `SELECT q.*, t.name as topic_name, s.name as subject_name
+    `SELECT q.*, t.nome as topic_name, s.nome as subject_name
      FROM questions q
-     JOIN topics t ON q.topic_id = t.id
-     JOIN subjects s ON t.subject_id = s.id
+     JOIN Topicos t ON q.topic_id = t.id_topico
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
      WHERE (q.correct_count + q.incorrect_count = 0) AND q.id NOT IN (${Array.from(addedIds).map(() => '?').join(',') || 'NULL'})
      ORDER BY RANDOM() LIMIT ?`,
     [...Array.from(addedIds), newCount]
@@ -828,10 +1243,10 @@ export async function getInterleavedSession(count = 10) {
   if (selectedQuestions.length < count) {
     const fillCount = count - selectedQuestions.length;
     const fallbackQuestions = await db.all(
-      `SELECT q.*, t.name as topic_name, s.name as subject_name
+      `SELECT q.*, t.nome as topic_name, s.name as subject_name
        FROM questions q
-       JOIN topics t ON q.topic_id = t.id
-       JOIN subjects s ON t.subject_id = s.id
+       JOIN Topicos t ON q.topic_id = t.id_topico
+       JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
        WHERE q.id NOT IN (${Array.from(addedIds).map(() => '?').join(',') || 'NULL'})
        ORDER BY RANDOM() LIMIT ?`,
       [...Array.from(addedIds), fillCount]
@@ -858,7 +1273,7 @@ export async function submitQuestionAnswer(questionId, selectedAnswer, responseT
 
   // Insert into history with profile_id
   await db.run(
-    'INSERT INTO answers_history (question_id, profile_id, is_correct, answered_at, response_time_seconds) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO Log_Questoes (question_id, profile_id, acertou, answered_at, tempo_resposta_segundos) VALUES (?, ?, ?, ?, ?)',
     [questionId, profileId, isCorrect, now, responseTimeSeconds]
   );
 
@@ -876,9 +1291,9 @@ export async function submitQuestionAnswer(questionId, selectedAnswer, responseT
   }
 
   // Update topic and subject last studied date
-  const topic = await db.get('SELECT * FROM topics WHERE id = ?', [question.topic_id]);
-  await db.run('UPDATE topics SET last_studied_at = ? WHERE id = ?', [now, topic.id]);
-  await db.run('UPDATE subjects SET last_studied_at = ? WHERE id = ?', [now, topic.subject_id]);
+  const topic = await db.get('SELECT * FROM Topicos WHERE id_topico = ?', [question.topic_id]);
+  await db.run('UPDATE Topicos SET data_ultima_revisao = ? WHERE id_topico = ?', [now, topic.id_topico]);
+  await db.run('UPDATE Disciplinas SET last_studied_at = ? WHERE id_disciplina = ?', [now, topic.id_disciplina]);
 
   // Gamification calculations
   let xpGained = 0;
@@ -906,11 +1321,11 @@ export async function submitQuestionAnswer(questionId, selectedAnswer, responseT
     }
 
     const previousAttempts = await db.get(
-      'SELECT COUNT(*) as count FROM answers_history WHERE question_id = ? AND is_correct = 0',
+      'SELECT COUNT(*) as count FROM Log_Questoes WHERE question_id = ? AND acertou = 0',
       [questionId]
     );
     const correctAttempts = await db.get(
-      'SELECT COUNT(*) as count FROM answers_history WHERE question_id = ? AND is_correct = 1',
+      'SELECT COUNT(*) as count FROM Log_Questoes WHERE question_id = ? AND acertou = 1',
       [questionId]
     );
 
@@ -924,7 +1339,22 @@ export async function submitQuestionAnswer(questionId, selectedAnswer, responseT
     coinsGained = 0;
   }
 
-  const profileUpdate = await updateXP(xpGained, coinsGained, topic.subject_id);
+  const currentMastery = await calculateTopicMastery(topic.id_topico);
+  await db.run('UPDATE Topicos SET percentual_dominio = ? WHERE id_topico = ?', [currentMastery, topic.id_topico]);
+
+  let bossFightTriggered = false;
+  if (currentMastery >= 80) {
+    const existingBossQs = await db.get(
+      "SELECT COUNT(*) as count FROM questions WHERE topic_id = ? AND difficulty = 'Hard' AND source = 'AI_ON_DEMAND'",
+      [topic.id_topico]
+    );
+    if (existingBossQs.count === 0) {
+      runGeneratorEngineInBackground(topic.id_topico, 'boss_fight');
+      bossFightTriggered = true;
+    }
+  }
+
+  const profileUpdate = await updateXP(xpGained, coinsGained, topic.id_disciplina);
 
   return {
     isCorrect,
@@ -975,12 +1405,12 @@ export async function submitFlashcardScore(flashcardId, score) {
     xpGained = 3;
   }
 
-  const topic = await db.get('SELECT * FROM topics WHERE id = ?', [fc.topic_id]);
+  const topic = await db.get('SELECT * FROM Topicos WHERE id_topico = ?', [fc.topic_id]);
   const now = new Date().toISOString();
-  await db.run('UPDATE topics SET last_studied_at = ? WHERE id = ?', [now, topic.id]);
-  await db.run('UPDATE subjects SET last_studied_at = ? WHERE id = ?', [now, topic.subject_id]);
+  await db.run('UPDATE Topicos SET data_ultima_revisao = ? WHERE id_topico = ?', [now, topic.id_topico]);
+  await db.run('UPDATE Disciplinas SET last_studied_at = ? WHERE id_disciplina = ?', [now, topic.id_disciplina]);
 
-  const profileUpdate = await updateXP(xpGained, coinsGained, topic.subject_id);
+  const profileUpdate = await updateXP(xpGained, coinsGained, topic.id_disciplina);
 
   return {
     newBox,
@@ -995,15 +1425,15 @@ export async function getStudyLogs() {
   return await db.all(
     `SELECT 
       ah.answered_at as data_hora,
-      s.name as materia,
-      t.name as topico,
+      s.nome as materia,
+      t.nome as topico,
       q.question_text as questao,
-      CASE WHEN ah.is_correct = 1 THEN 'ACERTO' ELSE 'ERRO' END as resultado,
-      ah.response_time_seconds as tempo_resposta
-     FROM answers_history ah
+      CASE WHEN ah.acertou = 1 THEN 'ACERTO' ELSE 'ERRO' END as resultado,
+      ah.tempo_resposta_segundos as tempo_resposta
+     FROM Log_Questoes ah
      JOIN questions q ON ah.question_id = q.id
-     JOIN topics t ON q.topic_id = t.id
-     JOIN subjects s ON t.subject_id = s.id
+     JOIN Topicos t ON q.topic_id = t.id_topico
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
      ORDER BY ah.answered_at DESC`
   );
 }
@@ -1011,11 +1441,9 @@ export async function getStudyLogs() {
 export async function saveStudySchedule(scheduleItems) {
   if (!Array.isArray(scheduleItems) || scheduleItems.length === 0) return;
   const profileId = await getActiveProfileId();
-  
-  const firstItem = scheduleItems[0];
-  if (firstItem.subject_name) {
-    await db.run('DELETE FROM study_schedule WHERE subject_name = ? AND profile_id = ?', [firstItem.subject_name, profileId]);
-  }
+
+  // Ensure the active profile only keeps the latest generated edital schedule
+  await db.run('DELETE FROM study_schedule WHERE profile_id = ?', [profileId]);
 
   for (const item of scheduleItems) {
     await db.run(
@@ -1038,7 +1466,7 @@ export async function completeScheduleItem(itemId) {
 
   await db.run('UPDATE study_schedule SET status = ? WHERE id = ?', ['Concluído', itemId]);
 
-  const subject = await db.get('SELECT id FROM subjects WHERE name = ?', [item.subject_name]);
+  const subject = await db.get('SELECT id_disciplina as id FROM Disciplinas WHERE nome = ?', [item.subject_name]);
   const subjectId = subject ? subject.id : null;
 
   const profileUpdate = await updateXP(15, 5, subjectId);
@@ -1053,28 +1481,74 @@ export async function completeScheduleItem(itemId) {
 
 export async function resetFatigueCounter(subjectId = null) {
   if (subjectId) {
-    await db.run('UPDATE subjects SET consecutive_answers = 0 WHERE id = ?', [subjectId]);
+    await db.run('UPDATE Disciplinas SET consecutive_answers = 0 WHERE id_disciplina = ?', [subjectId]);
   } else {
-    await db.run('UPDATE subjects SET consecutive_answers = 0');
+    await db.run('UPDATE Disciplinas SET consecutive_answers = 0');
   }
 }
 
 export async function getDiagnosticQuestions() {
-  return await db.all(
-    `SELECT q.*, s.name as subject_name, s.id as subject_id, t.name as topic_name 
+  const profileId = await getActiveProfileId();
+  
+  // We want exactly 10 Easy, 10 Medium, 10 Hard questions (total 30) from the user's subjects
+  const easy = await db.all(
+    `SELECT q.*, s.nome as subject_name, s.id_disciplina as subject_id, t.nome as topic_name 
      FROM questions q 
-     JOIN topics t ON q.topic_id = t.id 
-     JOIN subjects s ON t.subject_id = s.id 
-     ORDER BY RANDOM() LIMIT 10`
+     JOIN Topicos t ON q.topic_id = t.id_topico 
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
+     WHERE s.profile_id = ? AND q.difficulty = 'Easy'
+     ORDER BY RANDOM() LIMIT 10`,
+    [profileId]
   );
+  
+  const medium = await db.all(
+    `SELECT q.*, s.nome as subject_name, s.id_disciplina as subject_id, t.nome as topic_name 
+     FROM questions q 
+     JOIN Topicos t ON q.topic_id = t.id_topico 
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
+     WHERE s.profile_id = ? AND q.difficulty = 'Medium'
+     ORDER BY RANDOM() LIMIT 10`,
+    [profileId]
+  );
+  
+  const hard = await db.all(
+    `SELECT q.*, s.nome as subject_name, s.id_disciplina as subject_id, t.nome as topic_name 
+     FROM questions q 
+     JOIN Topicos t ON q.topic_id = t.id_topico 
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
+     WHERE s.profile_id = ? AND q.difficulty = 'Hard'
+     ORDER BY RANDOM() LIMIT 10`,
+    [profileId]
+  );
+
+  let merged = [...easy, ...medium, ...hard];
+  
+  // Fallback if there aren't enough questions of each difficulty
+  if (merged.length < 30) {
+    const ids = merged.map(x => x.id);
+    const placeholders = ids.map(() => '?').join(',') || 'NULL';
+    const fallback = await db.all(
+      `SELECT q.*, s.nome as subject_name, s.id_disciplina as subject_id, t.nome as topic_name 
+       FROM questions q 
+       JOIN Topicos t ON q.topic_id = t.id_topico 
+       JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
+       WHERE s.profile_id = ? AND q.id NOT IN (${placeholders})
+       ORDER BY RANDOM() LIMIT ?`,
+      [profileId, ...ids, 30 - merged.length]
+    );
+    merged = [...merged, ...fallback];
+  }
+
+  merged.sort(() => Math.random() - 0.5);
+  return merged;
 }
 
 export async function updateSubjectLevel(subjectId, level) {
-  await db.run('UPDATE subjects SET level = ? WHERE id = ?', [level, subjectId]);
+  await db.run('UPDATE Disciplinas SET nivel_atual = ? WHERE id_disciplina = ?', [level, subjectId]);
 }
 
 export async function setSubjectWeight(subjectId, weight) {
-  await db.run('UPDATE subjects SET weight = ? WHERE id = ?', [weight, subjectId]);
+  await db.run('UPDATE Disciplinas SET peso_edital = ? WHERE id_disciplina = ?', [weight, subjectId]);
 }
 
 export async function cureMentalFog() {
@@ -1088,9 +1562,26 @@ export async function cureMentalFog() {
 // ============================
 export async function checkAndLockCriticalSubjects() {
   const profileId = await getActiveProfileId();
-  const subjects = await db.all('SELECT * FROM subjects WHERE profile_id = ?', [profileId]);
-  const criticalSubjects = subjects.filter(s => (s.mastery || 0) < 15 && (s.mastery || 0) > 0);
+  const subjects = await db.all('SELECT id_disciplina as id, percentual_dominio as mastery, * FROM Disciplinas s JOIN Topicos t ON s.id_disciplina = t.id_disciplina WHERE s.profile_id = ?', [profileId]);
   
+  // Group topics by subject and calculate average mastery
+  const grouped = {};
+  subjects.forEach(s => {
+    if (!grouped[s.id_disciplina]) {
+      grouped[s.id_disciplina] = { name: s.nome, masterySum: 0, count: 0, last_studied_at: s.last_studied_at };
+    }
+    grouped[s.id_disciplina].masterySum += s.percentual_dominio || 0;
+    grouped[s.id_disciplina].count += 1;
+  });
+
+  const criticalSubjects = [];
+  for (const id in grouped) {
+    const avgMastery = grouped[id].masterySum / grouped[id].count;
+    if (avgMastery < 15 && grouped[id].last_studied_at !== null) {
+      criticalSubjects.push({ id: parseInt(id), name: grouped[id].name, mastery: Math.round(avgMastery) });
+    }
+  }
+
   if (criticalSubjects.length === 0) return { hasCritical: false, criticalSubjects: [] };
   
   const profile = await getProfile();
@@ -1110,16 +1601,16 @@ export async function checkAndLockCriticalSubjects() {
 export async function getSampleQuestion(subjectId) {
   const q = await db.get(
     `SELECT q.* FROM questions q
-     JOIN topics t ON q.topic_id = t.id
-     WHERE t.subject_id = ? AND q.difficulty = 'Easy'
+     JOIN Topicos t ON q.topic_id = t.id_topico
+     WHERE t.id_disciplina = ? AND q.difficulty = 'Easy'
      ORDER BY RANDOM() LIMIT 1`,
     [subjectId]
   );
   if (!q) {
     return await db.get(
       `SELECT q.* FROM questions q
-       JOIN topics t ON q.topic_id = t.id
-       WHERE t.subject_id = ? ORDER BY RANDOM() LIMIT 1`,
+       JOIN Topicos t ON q.topic_id = t.id_topico
+       WHERE t.id_disciplina = ? ORDER BY RANDOM() LIMIT 1`,
       [subjectId]
     );
   }
@@ -1145,17 +1636,17 @@ export async function generateDailyQuests() {
   const isSunday = (dayOfWeek === 0);
 
   const lowestMasteryTopic = await db.get(
-    `SELECT t.*, s.name as subject_name, s.weight 
-     FROM topics t 
-     JOIN subjects s ON t.subject_id = s.id 
-     ORDER BY t.mastery ASC LIMIT 1`
+    `SELECT t.id_topico as id, t.nome as name, t.percentual_dominio as mastery, s.nome as subject_name, s.peso_edital as weight 
+     FROM Topicos t 
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
+     ORDER BY t.percentual_dominio ASC LIMIT 1`
   ) || { name: 'Geral', subject_name: 'Geral', mastery: 75, id: 1 };
 
   const unstudiedTopic = await db.get(
-    `SELECT t.*, s.name as subject_name 
-     FROM topics t 
-     JOIN subjects s ON t.subject_id = s.id 
-     WHERE t.mastery = 0 OR s.level = 1 
+    `SELECT t.id_topico as id, t.nome as name, t.percentual_dominio as mastery, s.nome as subject_name 
+     FROM Topicos t 
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
+     WHERE t.percentual_dominio = 0 OR s.nivel_atual = 1 
      ORDER BY RANDOM() LIMIT 1`
   ) || { name: 'Geral', subject_name: 'Geral', mastery: 0, id: 1 };
 
@@ -1273,20 +1764,20 @@ export async function generateMarathon() {
   
   // 40 general questions (1pt each) + 30 specific (2.5pts each) = 70 total
   const generalQuestions = await db.all(
-    `SELECT q.*, t.name as topic_name, s.name as subject_name, s.module as subject_module
+    `SELECT q.*, t.nome as topic_name, s.nome as subject_name, s.module as subject_module
      FROM questions q
-     JOIN topics t ON q.topic_id = t.id
-     JOIN subjects s ON t.subject_id = s.id
+     JOIN Topicos t ON q.topic_id = t.id_topico
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
      WHERE s.profile_id = ? AND (q.module = 'general' OR s.module = 'general')
      ORDER BY RANDOM() LIMIT 40`,
     [profileId]
   );
   
   const specificQuestions = await db.all(
-    `SELECT q.*, t.name as topic_name, s.name as subject_name, s.module as subject_module
+    `SELECT q.*, t.nome as topic_name, s.nome as subject_name, s.module as subject_module
      FROM questions q
-     JOIN topics t ON q.topic_id = t.id
-     JOIN subjects s ON t.subject_id = s.id
+     JOIN Topicos t ON q.topic_id = t.id_topico
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
      WHERE s.profile_id = ? AND (q.module = 'specific' OR s.module = 'specific')
      ORDER BY RANDOM() LIMIT 30`,
     [profileId]
@@ -1296,10 +1787,10 @@ export async function generateMarathon() {
   let allQuestions = [...generalQuestions, ...specificQuestions];
   if (allQuestions.length < 10) {
     allQuestions = await db.all(
-      `SELECT q.*, t.name as topic_name, s.name as subject_name
+      `SELECT q.*, t.nome as topic_name, s.nome as subject_name
        FROM questions q
-       JOIN topics t ON q.topic_id = t.id
-       JOIN subjects s ON t.subject_id = s.id
+       JOIN Topicos t ON q.topic_id = t.id_topico
+       JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
        WHERE s.profile_id = ?
        ORDER BY RANDOM() LIMIT 70`,
       [profileId]
@@ -1330,7 +1821,7 @@ export async function submitMarathonResult(answers, startedAt, finishedAt) {
     const isCorrect = q.correct_answer === ans.selectedAnswer ? 1 : 0;
     const now = new Date().toISOString();
     await db.run(
-      'INSERT INTO answers_history (question_id, profile_id, is_correct, answered_at, response_time_seconds) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO Log_Questoes (question_id, profile_id, acertou, answered_at, tempo_resposta_segundos) VALUES (?, ?, ?, ?, ?)',
       [ans.questionId, profileId, isCorrect, now, ans.responseTime || 0]
     );
     if (isCorrect) {
@@ -1373,3 +1864,271 @@ export async function submitMarathonResult(answers, startedAt, finishedAt) {
     approved: totalScore >= 57.5 && correctGeneral > 0 && correctSpecific > 0
   };
 }
+
+export async function setDiagnosticCompleted() {
+  const profileId = await getActiveProfileId();
+  await db.run('UPDATE profiles SET diagnostic_completed = 1 WHERE id = ?', [profileId]);
+}
+
+export async function saveBrainDump(texto) {
+  await db.run('INSERT INTO Pensamentos_Intrusivos (pensamento, criado_em) VALUES (?, ?)', [texto, new Date().toISOString()]);
+}
+
+export async function importHierarchicalEdital(data) {
+  const profileId = await getActiveProfileId();
+  const now = new Date().toISOString();
+  const bancaName = data.banca || 'Geral';
+  
+  const createdSubjects = [];
+  
+  if (Array.isArray(data.subjects)) {
+    for (const s of data.subjects) {
+      let subjectRow = await db.get('SELECT id_disciplina FROM Disciplinas WHERE nome = ? AND profile_id = ?', [s.name, profileId]);
+      let subjectId;
+      if (!subjectRow) {
+        const r = await db.run(
+          'INSERT INTO Disciplinas (profile_id, nome, peso_edital, xp_acumulado, nivel_atual, banca, module, created_at, last_studied_at) VALUES (?, ?, ?, 0, 1, ?, ?, ?, ?)',
+          [profileId, s.name, s.module === 'specific' ? 2.5 : 1.0, bancaName, s.module || 'general', now, now]
+        );
+        subjectId = r.lastID;
+      } else {
+        subjectId = subjectRow.id_disciplina;
+      }
+      
+      const topicNameToId = {};
+      
+      if (Array.isArray(s.topics)) {
+        for (const t of s.topics) {
+          let topicRow = await db.get('SELECT id_topico FROM Topicos WHERE nome = ? AND id_disciplina = ?', [t.name, subjectId]);
+          let topicId;
+          if (!topicRow) {
+            const r = await db.run(
+              'INSERT INTO Topicos (id_disciplina, nome, percentual_dominio, data_ultima_revisao, status_plantacao, summary) VALUES (?, ?, 0.0, ?, ?, ?)',
+              [subjectId, t.name, now, 'semente', '']
+            );
+            topicId = r.lastID;
+          } else {
+            topicId = topicRow.id_topico;
+          }
+          topicNameToId[t.name] = topicId;
+        }
+        
+        for (const t of s.topics) {
+          const currentId = topicNameToId[t.name];
+          let parentId = null;
+          let prereqId = null;
+          
+          if (t.parent_topic && topicNameToId[t.parent_topic]) {
+            parentId = topicNameToId[t.parent_topic];
+          }
+          if (t.prerequisite_topic && topicNameToId[t.prerequisite_topic]) {
+            prereqId = topicNameToId[t.prerequisite_topic];
+          }
+          
+          if (parentId !== null || prereqId !== null) {
+            await db.run(
+              'UPDATE Topicos SET id_topico_pai = ?, requisito_id = ? WHERE id_topico = ?',
+              [parentId, prereqId, currentId]
+            );
+          }
+        }
+      }
+      
+      createdSubjects.push(s.name);
+    }
+  }
+  
+  const allCreatedTopics = await db.all(
+    `SELECT t.id_topico, t.nome as topic_name, s.nome as subject_name 
+     FROM Topicos t 
+     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
+     WHERE s.profile_id = ?`,
+    [profileId]
+  );
+  
+  const profile = await db.get('SELECT exam_date FROM profiles WHERE id = ?', [profileId]);
+  let daysToExam = 30;
+  if (profile && profile.exam_date) {
+    const diff = new Date(profile.exam_date) - new Date();
+    const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24));
+    if (diffDays > 0) daysToExam = diffDays;
+  }
+  
+  await db.run('DELETE FROM study_schedule WHERE profile_id = ?', [profileId]);
+  
+  const totalTopics = allCreatedTopics.length;
+  const nodesPerDay = Math.max(1, Math.ceil(totalTopics / Math.min(daysToExam, 30)));
+  
+  let currentDay = 1;
+  let currentCount = 0;
+  
+  for (const t of allCreatedTopics) {
+    const studyDate = new Date();
+    studyDate.setDate(studyDate.getDate() + (currentDay - 1));
+    const studyDateStr = studyDate.toISOString().split('T')[0];
+    
+    await db.run(
+      'INSERT INTO study_schedule (profile_id, subject_name, topic_name, study_date, days_left_indicator, status) VALUES (?, ?, ?, ?, ?, ?)',
+      [profileId, t.subject_name, t.topic_name, studyDateStr, currentDay, 'Pendente']
+    );
+    
+    currentCount++;
+    if (currentCount >= nodesPerDay) {
+      currentDay++;
+      currentCount = 0;
+    }
+  }
+  
+  return {
+    success: true,
+    subjects: createdSubjects,
+    totalTopics,
+    paceNodesPerDay: nodesPerDay
+  };
+}
+
+export async function saveShreddedPDF(subjectName, topicName, data) {
+  const profileId = await getActiveProfileId();
+  const now = new Date().toISOString();
+  
+  let subjectRow = await db.get('SELECT id_disciplina FROM Disciplinas WHERE nome = ? AND profile_id = ?', [subjectName, profileId]);
+  let subjectId;
+  if (!subjectRow) {
+    const r = await db.run(
+      'INSERT INTO Disciplinas (profile_id, nome, peso_edital, xp_acumulado, nivel_atual, banca, module, created_at, last_studied_at) VALUES (?, ?, 1.0, 0, 1, "Geral", "general", ?, ?)',
+      [profileId, subjectName, now, now]
+    );
+    subjectId = r.lastID;
+  } else {
+    subjectId = subjectRow.id_disciplina;
+  }
+  
+  let topicRow = await db.get('SELECT id_topico FROM Topicos WHERE nome = ? AND id_disciplina = ?', [topicName, subjectId]);
+  let topicId;
+  const summaryStr = JSON.stringify(data.summary_chunks || []);
+  if (!topicRow) {
+    const r = await db.run(
+      'INSERT INTO Topicos (id_disciplina, nome, percentual_dominio, data_ultima_revisao, status_plantacao, summary, keywords_feynman) VALUES (?, ?, 0.0, ?, ?, ?, ?)',
+      [subjectId, topicName, now, 'semente', summaryStr, data.keywords_feynman || '']
+    );
+    topicId = r.lastID;
+  } else {
+    topicId = topicRow.id_topico;
+    await db.run(
+      'UPDATE Topicos SET summary = ?, keywords_feynman = ?, data_ultima_revisao = ? WHERE id_topico = ?',
+      [summaryStr, data.keywords_feynman || '', now, topicId]
+    );
+  }
+  
+  await db.run('DELETE FROM questions WHERE topic_id = ?', [topicId]);
+  if (Array.isArray(data.questions)) {
+    for (const q of data.questions) {
+      await db.run(
+        'INSERT INTO questions (topic_id, question_text, options, correct_answer, explanation, difficulty, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [
+          topicId,
+          q.question,
+          JSON.stringify(q.options || []),
+          q.correct_answer || '',
+          q.explanation || '',
+          q.difficulty || 'Medium',
+          'imported'
+        ]
+      );
+    }
+  }
+  
+  await db.run('DELETE FROM flashcards WHERE topic_id = ?', [topicId]);
+  if (Array.isArray(data.flashcards)) {
+    const today = new Date().toISOString().split('T')[0];
+    for (const fc of data.flashcards) {
+      await db.run(
+        'INSERT INTO flashcards (topic_id, front, back, box, next_review_date) VALUES (?, ?, ?, 1, ?)',
+        [topicId, fc.front, fc.back, today]
+      );
+    }
+  }
+  
+  return {
+    success: true,
+    subjectId,
+    topicId,
+    chunks: data.summary_chunks ? data.summary_chunks.length : 0,
+    questions: data.questions ? data.questions.length : 0,
+    flashcards: data.flashcards ? data.flashcards.length : 0
+  };
+}
+
+export async function runGeneratorEngine(topicId, missionType) {
+  const topic = await db.get('SELECT * FROM Topicos WHERE id_topico = ?', [topicId]);
+  if (!topic) throw new Error('Tópico não encontrado');
+  
+  const subject = await db.get('SELECT * FROM Disciplinas WHERE id_disciplina = ?', [topic.id_disciplina]);
+  const banca = subject.banca || 'Geral';
+  const mastery = topic.percentual_dominio || 0;
+  
+  // 1. Error history: last 3 errors
+  const failedLogs = await db.all(
+    `SELECT q.question_text, q.correct_answer 
+     FROM Log_Questoes l
+     JOIN questions q ON l.question_id = q.id
+     WHERE l.id_topico = ? AND l.acertou = 0
+     ORDER BY l.answered_at DESC LIMIT 3`,
+    [topicId]
+  );
+  const errorsContext = failedLogs.map(f => `Questão: "${f.question_text}" | Resposta Correta: "${f.correct_answer}"`).join('\n');
+  
+  // 2. Difficulty scaler based on recent response speed (for correct answers in the last 5 logs)
+  const speedStats = await db.get(
+    `SELECT AVG(tempo_resposta_segundos) as avg_time 
+     FROM Log_Questoes 
+     WHERE id_topico = ? AND acertou = 1 
+     ORDER BY answered_at DESC LIMIT 5`,
+    [topicId]
+  );
+  
+  let difficulty = 'Medium';
+  if (missionType === 'boss_fight') {
+    difficulty = 'Hard';
+  } else if (mastery < 50) {
+    difficulty = 'Easy';
+  } else if (mastery >= 80 || (speedStats && speedStats.avg_time !== null && speedStats.avg_time < 20)) {
+    difficulty = 'Hard';
+  }
+  
+  // 3. AI call with ValidateTask & AdaptiveFeedback prompt constraints
+  const questionsList = await generateAdaptiveQuestions(
+    subject.nome,
+    topic.nome,
+    topic.summary || 'Conteúdo geral do edital.',
+    banca,
+    difficulty,
+    errorsContext
+  );
+  
+  // 4. Just-in-Time db insertion with source 'AI_ON_DEMAND'
+  for (const q of questionsList) {
+    await db.run(
+      `INSERT INTO questions (topic_id, question_text, options, correct_answer, explanation, difficulty, source)
+       VALUES (?, ?, ?, ?, ?, ?, 'AI_ON_DEMAND')`,
+      [
+        topicId,
+        q.question,
+        JSON.stringify(q.options),
+        q.correct_answer,
+        q.explanation,
+        q.difficulty || difficulty
+      ]
+    );
+  }
+  
+  console.log(`GeneratorEngine: Generated and inserted 5 adaptive questions for topic ID ${topicId} (${difficulty})`);
+  return { success: true, count: questionsList.length, difficulty };
+}
+
+export function runGeneratorEngineInBackground(topicId, missionType) {
+  runGeneratorEngine(topicId, missionType).catch(err => {
+    console.error('Error running GeneratorEngine in background:', err.message);
+  });
+}
+
