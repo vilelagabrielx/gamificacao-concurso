@@ -732,6 +732,20 @@ app.post('/api/study/ingest-pdf', async (req, res) => {
   }
 });
 
+// POST /api/study/generator-engine - trigger adaptive question generation for a topic
+app.post('/api/study/generator-engine', async (req, res) => {
+  try {
+    const { topicId, missionType } = req.body;
+    if (!topicId) {
+      return res.status(400).json({ error: 'topicId é obrigatório' });
+    }
+    const result = await runGeneratorEngine(parseInt(topicId), missionType || 'questions');
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // START SERVER
 initDB().then(() => {
   app.listen(PORT, () => {

@@ -448,6 +448,9 @@ async function loadTopics(subjectId) {
             <button class="btn btn-primary" onclick="startStudySession(${topic.id}, 'questions')">
               <i class="fa-solid fa-list-check"></i> Treinar Questões
             </button>
+            <button class="btn btn-warning" onclick="triggerAdaptiveGenerator(${topic.id}, this)" id="btn-adaptive-gen-${topic.id}" title="Gerar 5 novas questões sob demanda adaptadas às suas fraquezas">
+              <i class="fa-solid fa-wand-magic-sparkles"></i> IA On-Demand
+            </button>
           </div>
         </div>
       `;
@@ -3343,3 +3346,33 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 });
+
+window.triggerAdaptiveGenerator = async function(topicId, buttonEl) {
+  playSound.click();
+  const originalHtml = buttonEl.innerHTML;
+  buttonEl.disabled = true;
+  buttonEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Gerando...`;
+  
+  try {
+    const res = await fetch(`${API_BASE}/study/generator-engine`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topicId, missionType: 'questions' })
+    });
+    
+    if (res.ok) {
+      const data = await res.json();
+      playSound.success();
+      alert(`🎯 IA On-Demand: 5 questões adaptativas de nível '${data.difficulty}' geradas com sucesso!`);
+    } else {
+      const errorData = await res.json();
+      alert('Erro ao gerar questões: ' + (errorData.error || 'Erro desconhecido'));
+    }
+  } catch (err) {
+    console.error('Error in triggerAdaptiveGenerator:', err);
+    alert('Erro de conexão ao gerar questões: ' + err.message);
+  } finally {
+    buttonEl.disabled = false;
+    buttonEl.innerHTML = originalHtml;
+  }
+};
