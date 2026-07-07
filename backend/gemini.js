@@ -32,27 +32,93 @@ async function generateWithFallback(makeContents, generationConfig = { responseM
 }
 
 // Generate new questions for a topic when they are running low
-export async function generateNewQuestions(subjectName, topicName, summary, existingQuestionsCount) {
+const DEFAULT_FGV_EXAMPLES = `
+Exemplo 1 (Língua Portuguesa):
+Questão: "Texto: 'A história é escrita pelos vencedores.' (George Orwell). Assinale a opção que apresenta a reescrita correta da frase, preservando o sentido original e a coerência gramatical."
+Opções: ["A) Os vencedores escrevem a história.", "B) A história deve ser escrita pelos vencedores.", "C) Escreve-se a história por quem vence.", "D) Pelos vencedores a história é de ser escrita.", "E) A escrita da história se faz por vencedores."]
+Gabarito: "A) Os vencedores escrevem a história."
+Explicação: A transposição da voz passiva analítica para a voz ativa mantém intacto o sentido do enunciado original de Orwell, preservando a correção gramatical da norma-padrão.
+
+Exemplo 2 (Raciocínio Lógico):
+Questão: "Três analistas da DATAPREV, André, Bruno e Carlos, trabalham em diferentes projetos: Nuvem, Segurança e Banco de Dados. Sabe-se que: André não trabalha com Nuvem; Bruno trabalha com Segurança; Carlos não trabalha com Banco de Dados. A alternativa que apresenta a associação correta é:"
+Opções: ["A) André trabalha com Banco de Dados e Carlos trabalha com Nuvem.", "B) André trabalha com Nuvem e Carlos trabalha com Banco de Dados.", "C) Bruno trabalha com Banco de Dados e André trabalha com Segurança.", "D) Carlos trabalha com Segurança e Bruno trabalha com Nuvem.", "E) André trabalha com Segurança e Carlos trabalha com Banco de Dados."]
+Gabarito: "A) André trabalha com Banco de Dados e Carlos trabalha com Nuvem."
+Explicação: Sabendo que Bruno trabalha com Segurança, restam Nuvem e Banco de Dados para André e Carlos. Como André não trabalha com Nuvem, conclui-se que André trabalha com Banco de Dados, restando para Carlos o projeto de Nuvem.
+
+Exemplo 3 (Arquitetura Tecnológica / ATI Específico):
+Questão: "Na arquitetura de microsserviços da DATAPREV, um engenheiro precisa implementar uma estratégia de resiliência que impeça falhas em cascata quando um serviço remoto de banco de dados ficar instável. A abordagem padrão de design que monitora as falhas subsequentes e abre o circuito temporariamente é o padrão:"
+Opções: ["A) Circuit Breaker", "B) Bulkhead", "C) Retry with Exponential Backoff", "D) Load Balancer", "E) Saga Pattern"]
+Gabarito: "A) Circuit Breaker"
+Explicação: O Circuit Breaker monitora falhas de chamadas a serviços externos. Ao atingir um limite, abre o circuito, retornando erro imediato sem sobrecarregar o recurso instável, garantindo a resiliência global do ecossistema.
+`;
+
+export async function generateNewQuestions(
+  subjectName,
+  topicName,
+  summary,
+  existingQuestionsCount,
+  mastery = null,
+  confidence = null,
+  daysUntilExam = null,
+  examples = null,
+  recentErrors = null,
+  topicWeight = null
+) {
   try {
+    const finalExamples = examples ? `${DEFAULT_FGV_EXAMPLES}\nOutros Exemplos Reais:\n${examples}` : DEFAULT_FGV_EXAMPLES;
+    
+    let statsContext = '';
+    if (mastery !== null) statsContext += `- Domínio atual do aluno: ${mastery}%\n`;
+    if (confidence !== null) statsContext += `- Nível de confiança do aluno: ${confidence}%\n`;
+    if (daysUntilExam !== null) statsContext += `- Dias restantes até a prova: ${daysUntilExam} dias\n`;
+    if (topicWeight !== null) statsContext += `- Peso do assunto no edital: ${topicWeight}\n`;
+    if (recentErrors) statsContext += `- Histórico de erros recentes (Evite repetir, mas cobre os mesmos conceitos para recuperação):\n${recentErrors}\n`;
+
     const prompt = `
-      Você é um professor especialista em concursos públicos. O aluno está estudando a matéria "${subjectName}", tópico "${topicName}".
-      O resumo do tópico é: "${summary}".
-      Ele já respondeu ${existingQuestionsCount} questões sobre este tópico.
+      Você é um Engenheiro Pedagógico e especialista em banca examinadora FGV.
+      Sua tarefa é gerar exatamente 5 questões inéditas de múltipla escolha de alto nível para o concurso da DATAPREV 2026, cargo ATI - Arquitetura, Engenharia e Sustentação Tecnológica.
       
-      Gere 5 novas questões inéditas de múltipla escolha de alto nível (estilo FCC, FGV ou Cebraspe adaptado) no formato JSON.
-      As opções devem ser sempre 4 alternativas (A, B, C, D).
-      Retorne APENAS um objeto JSON contendo uma chave "questions" que é um array com as 5 questões geradas.
-      Cada elemento do array de questões deve seguir este esquema:
+      CONCURSO: DATAPREV 2026
+      CARGO: ATI - Arquitetura, Engenharia e Sustentação Tecnológica
+      BANCA: FGV (Foco estrito em enunciados elaborados, situações-problema e pegadinhas técnicas sutis).
+      
+      MATÉRIA: "${subjectName}"
+      TÓPICO DE ESTUDO: "${topicName}"
+      RESUMO DO CONTEÚDO (Grounding):
+      "${summary}"
+      
+      DADOS ADAPTATIVOS DO ALUNO:
+      ${statsContext || 'Nenhum dado histórico registrado.'}
+      
+      INSTRUÇÕES DE FORMATO & ESTILO (Imitar rigorosamente a banca FGV):
+      - As opções devem ser exatamente 5 alternativas (A, B, C, D, E).
+      - Mimetize o tamanho dos enunciados da FGV e a complexidade conceitual.
+      - Para cada questão, indique a dificuldade real (Easy/Medium/Hard).
+      - Adicione uma explicação pedagógica detalhada justificando o gabarito e detalhando por que cada alternativa incorreta está errada.
+      
+      EXEMPLOS DE PROVAS DA FGV PARA REFERÊNCIA (Few-Shot):
+      ${finalExamples}
+      
+      Retorne APENAS um objeto JSON válido contendo uma chave "questions" que é um array com as 5 questões geradas.
+      Não adicione markdown como \`\`\`json no início ou no fim. Retorne o texto JSON puro.
+      Esquema de saída esperado:
       {
-        "question": "Enunciado da questão...",
-        "options": ["A) Opção A", "B) Opção B", "C) Opção C", "D) Opção D"],
-        "correct_answer": "C) Opção C",
-        "difficulty": "Easy/Medium/Hard",
-        "explanation": "Explicação detalhada da resolução..."
+        "questions": [
+          {
+            "question": "Enunciado completo da questão no estilo FGV...",
+            "options": ["A) Opção A", "B) Opção B", "C) Opção C", "D) Opção D", "E) Opção E"],
+            "correct_answer": "Alternativa correspondente ao gabarito (ex: C) Opção C)",
+            "difficulty": "Easy/Medium/Hard",
+            "explanation": "Explicação pedagógica detalhada..."
+          }
+        ]
       }
     `;
 
-    const result = await generateWithFallback(() => ([{ role: 'user', parts: [{ text: prompt }] }]), { responseMimeType: 'application/json' });
+    const result = await generateWithFallback(
+      () => ([{ role: 'user', parts: [{ text: prompt }] }]),
+      { responseMimeType: 'application/json' }
+    );
     const responseText = result.response.text();
     const parsed = JSON.parse(responseText);
     

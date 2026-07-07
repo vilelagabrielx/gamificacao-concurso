@@ -128,6 +128,24 @@ export async function initDB() {
   `);
 
   // ============================
+  // PRD TABLE: TopicMastery
+  // ============================
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS TopicMastery (
+      profile_id INTEGER,
+      topic_id INTEGER,
+      mastery REAL DEFAULT 0.0,
+      confidence REAL DEFAULT 100.0,
+      forgetting_score REAL DEFAULT 0.0,
+      last_review TEXT,
+      next_review TEXT,
+      avg_response_time REAL DEFAULT 0.0,
+      PRIMARY KEY (profile_id, topic_id),
+      FOREIGN KEY(topic_id) REFERENCES Topicos(id_topico) ON DELETE CASCADE
+    )
+  `);
+
+  // ============================
   // PRD TABLE: Pensamentos_Intrusivos
   // ============================
   await db.exec(`
@@ -355,6 +373,7 @@ export async function initDB() {
 }
 
 export async function resetDatabase() {
+  await db.run('DROP TABLE IF EXISTS TopicMastery');
   await db.run('DROP TABLE IF EXISTS answers_history');
   await db.run('DROP TABLE IF EXISTS Log_Questoes');
   await db.run('DROP TABLE IF EXISTS flashcards');
@@ -882,6 +901,386 @@ async function calculateTopicMastery(topicId) {
   return Math.max(0, Math.min(100, realMastery));
 }
 
+// SYNC TOPIC MASTERY TABLE FOR PROFILE AND TOPIC
+export async function syncTopicMastery(profileId, topicId) {
+  try {
+    const logs = await db.all(
+      `SELECT acertou, tempo_resposta_segundos, confidence, answered_at 
+       FROM Log_Questoes 
+       WHERE id_topico = ? AND profile_id = ? 
+       ORDER BY answered_at DESC`,
+      [topicId, profileId]
+    );
+
+    if (logs.length === 0) {
+      const today = new Date().toISOString().split('T')[0];
+      await db.run(
+        `INSERT INTO TopicMastery (profile_id, topic_id, mastery, confidence, forgetting_score, last_review, next_review, avg_response_time)
+         VALUES (?, ?, 0, 100, 100, NULL, ?, 0)
+         ON CONFLICT(profile_id, topic_id) DO UPDATE SET
+           mastery=0, confidence=100, forgetting_score=100, last_review=NULL, next_review=excluded.next_review, avg_response_time=0`,
+        [profileId, topicId, today]
+      );
+      return;
+    }
+
+    const mastery = await calculateTopicMastery(topicId);
+
+    let totalConfidence = 0;
+    logs.forEach(l => {
+      if (l.confidence === 'Certeza Absoluta' || !l.confidence) totalConfidence += 100;
+      else if (l.confidence === 'Dúvida') totalConfidence += 50;
+      else if (l.confidence === 'Chute') totalConfidence += 10;
+    });
+    const avgConfidence = Math.round(totalConfidence / logs.length);
+
+    const lastReviewDateStr = logs[0].answered_at;
+    const lastReview = lastReviewDateStr ? lastReviewDateStr.split('T')[0] : new Date().toISOString().split('T')[0];
+
+    // Ebbinghaus decay calculation for forgetting score
+    let daysSince = 0;
+    if (lastReviewDateStr) {
+      const lastDate = new Date(lastReviewDateStr);
+      const now = new Date();
+      const diffTime = Math.abs(now - lastDate);
+      daysSince = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    }
+    const forgetting_score = Math.max(0, Math.min(100, Math.round(100 - (mastery * Math.pow(0.97, daysSince)))));
+
+    // Spaced repetition interval (days until next review)
+    let interval = 1;
+    if (mastery >= 80 && avgConfidence >= 80) {
+      interval = 14;
+    } else if (mastery >= 60 && avgConfidence >= 60) {
+      interval = 7;
+    } else if (mastery >= 40) {
+      interval = 3;
+    }
+    
+    const nextReviewDate = new Date(lastReviewDateStr || new Date());
+    nextReviewDate.setDate(nextReviewDate.getDate() + interval);
+    const next_review = nextReviewDate.toISOString().split('T')[0];
+
+    const totalResponseTime = logs.reduce((acc, l) => acc + (l.tempo_resposta_segundos || 0), 0);
+    const avg_response_time = Math.round((totalResponseTime / logs.length) * 10) / 10;
+
+    await db.run(
+      `INSERT INTO TopicMastery (profile_id, topic_id, mastery, confidence, forgetting_score, last_review, next_review, avg_response_time)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(profile_id, topic_id) DO UPDATE SET
+         mastery = excluded.mastery,
+         confidence = excluded.confidence,
+         forgetting_score = excluded.forgetting_score,
+         last_review = excluded.last_review,
+         next_review = excluded.next_review,
+         avg_response_time = excluded.avg_response_time`,
+      [profileId, topicId, mastery, avgConfidence, forgetting_score, lastReview, next_review, avg_response_time]
+    );
+  } catch (error) {
+    console.error('Error syncing TopicMastery:', error);
+  }
+}
+
+// Sync all topic masteries for a profile
+export async function syncAllTopicMasteries(profileId) {
+  const topics = await db.all('SELECT id_topico FROM Topicos');
+  for (const t of topics) {
+    await syncTopicMastery(profileId, t.id_topico);
+  }
+}
+
+// helper for FGV specific prioritization rules
+function getFgvIncidenceMultiplier(subjectName, topicName) {
+  const sName = subjectName.toLowerCase();
+  const tName = topicName.toLowerCase();
+
+  // Português: sintaxe, análise sintática, orações, regência, interpretação
+  if (sName.includes('portuguesa')) {
+    if (tName.includes('sintaxe') || tName.includes('sintática') || tName.includes('oração') || tName.includes('orações') || tName.includes('regência') || tName.includes('interpretação')) {
+      return 2.5; 
+    }
+  }
+
+  // Inglês: interpretação de texto, gramática contextual
+  if (sName.includes('inglesa')) {
+    if (tName.includes('interpretação') || tName.includes('gramática') || tName.includes('contextual')) {
+      return 2.0;
+    }
+  }
+
+  // Raciocínio Lógico: classic problems
+  if (sName.includes('raciocínio') || sName.includes('logico') || sName.includes('lógico')) {
+    return 1.8;
+  }
+
+  return 1.0;
+}
+
+// helper for mission titles
+function getMissionTitle(mission) {
+  const difficultyLabel = mission.difficulty === 'Hard' ? 'HARD 🔥' : (mission.difficulty === 'Easy' ? 'FÁCIL 🟢' : 'MÉDIO 🟡');
+  switch (mission.missionType) {
+    case 'LEARN':
+      return `Aprender (${difficultyLabel}): ${mission.topicName}`;
+    case 'REVIEW':
+      return `Revisar (${difficultyLabel}): ${mission.topicName}`;
+    case 'BOSS':
+      return `Desafio do Chefe 👑 (HARD): ${mission.topicName}`;
+    case 'MOCK_EXAM':
+      return `Simulado FGV DATAPREV 📝`;
+    case 'RECOVERY':
+      return `Recuperação de Erros 🩹: ${mission.topicName}`;
+    default:
+      return `Estudar: ${mission.topicName}`;
+  }
+}
+
+// PLANNER AGENT SERVICE
+export const plannerAgent = {
+  async generateDailyMission(profileId) {
+    const profile = await db.get('SELECT * FROM profiles WHERE id = ?', [profileId]);
+    if (!profile) throw new Error('Perfil não encontrado');
+
+    let daysUntilExam = 90;
+    if (profile.exam_date) {
+      const diffTime = new Date(profile.exam_date) - new Date();
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+      if (diffDays > 0) daysUntilExam = diffDays;
+    }
+
+    // sync current topic masteries to ensure data is fresh
+    const topicsList = await db.all('SELECT id_topico FROM Topicos');
+    for (const t of topicsList) {
+      await syncTopicMastery(profileId, t.id_topico);
+    }
+
+    const topics = await db.all(
+      `SELECT t.id_topico as id, t.nome as name, s.nome as subject_name, s.peso_edital as weight, s.module as subject_module,
+              tm.mastery, tm.confidence, tm.forgetting_score, tm.last_review, tm.next_review, tm.avg_response_time
+       FROM Topicos t
+       JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
+       LEFT JOIN TopicMastery tm ON t.id_topico = tm.topic_id AND tm.profile_id = ?
+       WHERE s.profile_id = ?`,
+      [profileId, profileId]
+    );
+
+    if (topics.length === 0) {
+      return {
+        missionType: 'LEARN',
+        topicId: 1,
+        topicName: 'Geral',
+        difficulty: 'Easy',
+        questions: [],
+        reason: 'Nenhum tópico cadastrado no edital ainda.'
+      };
+    }
+
+    // Determine mission type probabilities based on daysRemaining
+    let missionType = 'LEARN';
+    const rand = Math.random();
+
+    if (daysUntilExam <= 7) {
+      missionType = 'MOCK_EXAM';
+    } else if (daysUntilExam <= 15) {
+      // 30% learn, 70% review/recovery
+      missionType = rand < 0.3 ? 'LEARN' : (rand < 0.85 ? 'REVIEW' : 'RECOVERY');
+    } else if (daysUntilExam <= 30) {
+      // 50% learn, 50% review/recovery
+      missionType = rand < 0.5 ? 'LEARN' : (rand < 0.9 ? 'REVIEW' : 'RECOVERY');
+    } else {
+      // > 30 days: 70% learn, 30% review/recovery
+      missionType = rand < 0.7 ? 'LEARN' : (rand < 0.95 ? 'REVIEW' : 'RECOVERY');
+    }
+
+    // Check if we should trigger a BOSS mission (mastery >= 80%)
+    const highMasteryTopics = topics.filter(t => (t.mastery || 0) >= 80);
+    if (highMasteryTopics.length > 0 && Math.random() < 0.15 && missionType !== 'MOCK_EXAM') {
+      missionType = 'BOSS';
+    }
+
+    // MOCK_EXAM logic
+    if (missionType === 'MOCK_EXAM') {
+      // Get 15 questions from multiple topics
+      const questions = await db.all(
+        `SELECT q.*, t.nome as topic_name, s.nome as subject_name 
+         FROM questions q 
+         JOIN Topicos t ON q.topic_id = t.id_topico
+         JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
+         WHERE s.profile_id = ?
+         ORDER BY RANDOM() LIMIT 15`,
+        [profileId]
+      );
+      return {
+        missionType: 'MOCK_EXAM',
+        topicId: null,
+        topicName: 'Simulado Geral',
+        difficulty: 'Medium',
+        questions,
+        reason: `Simulado Geral FGV: Faltam apenas ${daysUntilExam} dias para a prova! Teste de resistência mental.`
+      };
+    }
+
+    // RECOVERY logic
+    if (missionType === 'RECOVERY') {
+      const recentErrors = await db.all(
+        `SELECT DISTINCT q.topic_id 
+         FROM Log_Questoes l
+         JOIN questions q ON l.question_id = q.id
+         WHERE l.profile_id = ? AND l.acertou = 0
+         ORDER BY l.answered_at DESC LIMIT 5`,
+        [profileId]
+      );
+
+      if (recentErrors.length > 0) {
+        const errorTopicId = recentErrors[0].topic_id;
+        const topic = topics.find(t => t.id === errorTopicId);
+        if (topic) {
+          const questions = await db.all(
+            `SELECT q.* FROM questions q
+             WHERE q.topic_id = ? AND q.id IN (
+               SELECT question_id FROM Log_Questoes WHERE profile_id = ? AND acertou = 0
+             ) LIMIT 5`,
+            [errorTopicId, profileId]
+          );
+          return {
+            missionType: 'RECOVERY',
+            topicId: errorTopicId,
+            topicName: topic.name,
+            difficulty: 'Easy',
+            questions,
+            reason: `Recuperação: Vamos revisar os conceitos e as questões que você errou recentemente em '${topic.name}'.`
+          };
+        }
+      }
+      missionType = 'REVIEW'; // Fallback to REVIEW if no errors
+    }
+
+    // BOSS logic
+    if (missionType === 'BOSS' && highMasteryTopics.length > 0) {
+      const selected = highMasteryTopics[Math.floor(Math.random() * highMasteryTopics.length)];
+      const questions = await db.all(
+        `SELECT * FROM questions WHERE topic_id = ? AND difficulty = 'Hard' LIMIT 5`,
+        [selected.id]
+      );
+      return {
+        missionType: 'BOSS',
+        topicId: selected.id,
+        topicName: selected.name,
+        difficulty: 'Hard',
+        questions,
+        reason: `Desafio do Chefe (BOSS): Teste seus conhecimentos avançados no tópico '${selected.name}' onde seu domínio é de ${selected.mastery || 80}%.`
+      };
+    }
+
+    // LEARN / REVIEW ranking logic
+    const ranked = [];
+    for (const t of topics) {
+      let fgv_multiplier = getFgvIncidenceMultiplier(t.subject_name, t.name);
+      
+      // If topic is mentioned in imported questions, it has higher incidence
+      const importedCount = await db.get(
+        `SELECT COUNT(*) as count FROM questions WHERE topic_id = ? AND source = 'imported'`,
+        [t.id]
+      );
+      if (importedCount && importedCount.count > 0) {
+        fgv_multiplier *= 2.0;
+      }
+
+      const weight = t.weight || 1.0;
+      const mastery = t.mastery || 0;
+      const forgetting = t.forgetting_score || 0;
+
+      let score = 0;
+      if (missionType === 'LEARN') {
+        score = weight * fgv_multiplier * (100 - mastery);
+      } else {
+        score = weight * fgv_multiplier * (forgetting + 10);
+      }
+
+      ranked.push({ topic: t, score });
+    }
+
+    ranked.sort((a, b) => b.score - a.score);
+    const selectedTopic = ranked[0].topic;
+
+    // Difficulty scaler based on mastery and average response time
+    let difficulty = 'Medium';
+    if (selectedTopic.mastery < 45) {
+      difficulty = 'Easy';
+    } else if (selectedTopic.mastery > 75 || (selectedTopic.avg_response_time && selectedTopic.avg_response_time < 30)) {
+      difficulty = 'Hard';
+    }
+
+    // If Logical Reasoning, prioritize Medium per FGV guidelines
+    if (selectedTopic.subject_name.toLowerCase().includes('raciocínio') || selectedTopic.subject_name.toLowerCase().includes('lógico')) {
+      difficulty = 'Medium';
+    }
+
+    // Get questions from DB
+    let questions = await db.all('SELECT * FROM questions WHERE topic_id = ? ORDER BY RANDOM() LIMIT 5', [selectedTopic.id]);
+
+    // If not enough questions, return whatever we have or let the generator replenish it
+    const reason = missionType === 'LEARN'
+      ? `Aprendizado: Tópico '${selectedTopic.name}' da matéria '${selectedTopic.subject_name}', priorizado conforme peso no edital e relevância na FGV.`
+      : `Revisão Espaçada: Tópico '${selectedTopic.name}' está com score de esquecimento de ${selectedTopic.forgetting_score || 0}%. Hora de reforçar!`;
+
+    return {
+      missionType,
+      topicId: selectedTopic.id,
+      topicName: selectedTopic.name,
+      difficulty,
+      questions,
+      reason
+    };
+  },
+
+  async generateComplementaryMission(profileId, excludeTopicId) {
+    try {
+      const topics = await db.all(
+        `SELECT t.id_topico as id, t.nome as name, s.nome as subject_name, s.peso_edital as weight,
+                tm.mastery, tm.forgetting_score
+         FROM Topicos t
+         JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina
+         LEFT JOIN TopicMastery tm ON t.id_topico = tm.topic_id AND tm.profile_id = ?
+         WHERE s.profile_id = ? AND t.id_topico != ?`,
+        [profileId, profileId, excludeTopicId]
+      );
+
+      if (topics.length === 0) return null;
+
+      // Select a review topic that has mastery > 0
+      const reviewTopics = topics.filter(t => (t.mastery || 0) > 0);
+      if (reviewTopics.length > 0) {
+        reviewTopics.sort((a, b) => (b.forgetting_score || 0) - (a.forgetting_score || 0));
+        const selected = reviewTopics[0];
+        const questions = await db.all('SELECT * FROM questions WHERE topic_id = ? ORDER BY RANDOM() LIMIT 5', [selected.id]);
+        return {
+          missionType: 'REVIEW',
+          topicId: selected.id,
+          topicName: selected.name,
+          difficulty: 'Medium',
+          questions,
+          reason: `Revisão Recomendada: Evite o esquecimento de '${selected.name}'.`
+        };
+      }
+
+      // If no studied topics to review, pick any learn topic
+      const selected = topics[Math.floor(Math.random() * topics.length)];
+      const questions = await db.all('SELECT * FROM questions WHERE topic_id = ? ORDER BY RANDOM() LIMIT 5', [selected.id]);
+      return {
+        missionType: 'LEARN',
+        topicId: selected.id,
+        topicName: selected.name,
+        difficulty: 'Easy',
+        questions,
+        reason: `Estudo Adaptativo: Explore um novo assunto: '${selected.name}'.`
+      };
+    } catch (e) {
+      return null;
+    }
+  }
+};
+
 // IMPORT LOGIC (supports banca + profile_id + module)
 export async function importSubjectJSON(data) {
   const now = new Date().toISOString();
@@ -1341,6 +1740,7 @@ export async function submitQuestionAnswer(questionId, selectedAnswer, responseT
 
   const currentMastery = await calculateTopicMastery(topic.id_topico);
   await db.run('UPDATE Topicos SET percentual_dominio = ? WHERE id_topico = ?', [currentMastery, topic.id_topico]);
+  await syncTopicMastery(profileId, topic.id_topico);
 
   let bossFightTriggered = false;
   if (currentMastery >= 80) {
@@ -1411,6 +1811,8 @@ export async function submitFlashcardScore(flashcardId, score) {
   await db.run('UPDATE Disciplinas SET last_studied_at = ? WHERE id_disciplina = ?', [now, topic.id_disciplina]);
 
   const profileUpdate = await updateXP(xpGained, coinsGained, topic.id_disciplina);
+  const profileId = await getActiveProfileId();
+  await syncTopicMastery(profileId, fc.topic_id);
 
   return {
     newBox,
@@ -1618,10 +2020,14 @@ export async function getSampleQuestion(subjectId) {
 }
 
 export async function generateDailyQuests() {
-  const maxItem = await db.get('SELECT MAX(days_left_indicator) as maxDays FROM study_schedule WHERE status = "Pendente"');
-  let daysLeft = 90; 
-  if (maxItem && maxItem.maxDays !== null) {
-    daysLeft = maxItem.maxDays;
+  const profileId = await getActiveProfileId();
+  const profile = await getProfile();
+
+  let daysLeft = 90;
+  if (profile && profile.exam_date) {
+    const diff = new Date(profile.exam_date) - new Date();
+    const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24));
+    if (diffDays > 0) daysLeft = diffDays;
   }
 
   let phase = 'Cultivation';
@@ -1631,93 +2037,73 @@ export async function generateDailyQuests() {
     phase = 'Lapidation';
   }
 
-  const dayOfWeek = new Date().getDay(); 
-  const isSaturday = (dayOfWeek === 6);
-  const isSunday = (dayOfWeek === 0);
+  const dayOfWeek = new Date().getDay();
 
-  const lowestMasteryTopic = await db.get(
-    `SELECT t.id_topico as id, t.nome as name, t.percentual_dominio as mastery, s.nome as subject_name, s.peso_edital as weight 
-     FROM Topicos t 
-     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
-     ORDER BY t.percentual_dominio ASC LIMIT 1`
-  ) || { name: 'Geral', subject_name: 'Geral', mastery: 75, id: 1 };
-
-  const unstudiedTopic = await db.get(
-    `SELECT t.id_topico as id, t.nome as name, t.percentual_dominio as mastery, s.nome as subject_name 
-     FROM Topicos t 
-     JOIN Disciplinas s ON t.id_disciplina = s.id_disciplina 
-     WHERE t.percentual_dominio = 0 OR s.nivel_atual = 1 
-     ORDER BY RANDOM() LIMIT 1`
-  ) || { name: 'Geral', subject_name: 'Geral', mastery: 0, id: 1 };
+  // Call plannerAgent to get a personalized daily mission
+  const mission = await plannerAgent.generateDailyMission(profileId);
 
   let quests = [];
 
-  if (isSunday) {
+  // Quest 1: Primary Mission (LEARN, REVIEW, BOSS, MOCK_EXAM, RECOVERY)
+  quests.push({
+    id: `daily-mission-primary`,
+    type: mission.missionType.toLowerCase(),
+    title: getMissionTitle(mission),
+    desc: mission.reason,
+    target: mission.questions && mission.questions.length > 0 ? mission.questions.length : 5,
+    reward: mission.missionType === 'BOSS' ? 120 : (mission.missionType === 'MOCK_EXAM' ? 200 : 80),
+    rewardType: 'xp',
+    progress: 0,
+    completed: false,
+    topicId: mission.topicId,
+    missionType: mission.missionType,
+    difficulty: mission.difficulty
+  });
+
+  // Quest 2: Secondary / Complementary study mission
+  const complementary = await plannerAgent.generateComplementaryMission(profileId, mission.topicId || 0);
+  if (complementary) {
     quests.push({
-      id: 'sunday-rescue',
-      type: 'rescue',
-      title: 'Cura de Feridas: Revise as 10 questões mais erradas da semana.',
-      desc: 'Analise os erros para reestruturar as sinapses.',
-      target: 10,
-      reward: 40,
-      rewardType: 'xp',
-      progress: 0,
-      completed: false
-    });
-  } 
-  else if (isSaturday) {
-    quests.push({
-      id: 'saturday-simulated',
-      type: 'epic',
-      title: 'Simulado do Cérebro: Faça o simulado cronometrado de alta relevância (15 questões).',
-      desc: 'Bateria contendo disciplinas de alto peso do edital.',
-      target: 15,
-      reward: 150,
-      rewardType: 'xp',
-      progress: 0,
-      completed: false
-    });
-  } 
-  else {
-    let q1Target = (phase === 'Harvest') ? 15 : 10;
-    quests.push({
-      id: 'urgency-quest',
-      type: 'urgency',
-      title: `Alerta de Ruptura! Domínio em '${lowestMasteryTopic.name}' está baixo (${lowestMasteryTopic.mastery}%). Faça ${q1Target} questões para restaurar.`,
-      desc: 'Evite a curva do esquecimento de Ebbinghaus.',
-      target: q1Target,
+      id: `daily-mission-secondary`,
+      type: complementary.missionType.toLowerCase(),
+      title: getMissionTitle(complementary),
+      desc: complementary.reason,
+      target: complementary.questions && complementary.questions.length > 0 ? complementary.questions.length : 5,
       reward: 60,
       rewardType: 'xp',
       progress: 0,
       completed: false,
-      topicId: lowestMasteryTopic.id
+      topicId: complementary.topicId,
+      missionType: complementary.missionType,
+      difficulty: complementary.difficulty
     });
-
+  } else {
     quests.push({
       id: 'offensive-quest',
-      type: 'offensive',
-      title: `Expanda o Território: Acerte questões em '${unstudiedTopic.name}' para evoluir na trilha.`,
-      desc: 'Estimule a neuroplasticidade com conteúdo novo.',
+      type: 'learn',
+      title: 'Neuroplasticidade: Pratique evocações ativas em tópicos de peso alto.',
+      desc: 'Fixação de conteúdos para reter memória de longo prazo.',
       target: 5,
-      reward: 80,
+      reward: 50,
       rewardType: 'xp',
       progress: 0,
       completed: false,
-      topicId: unstudiedTopic.id
-    });
-
-    quests.push({
-      id: 'dopamine-roulette',
-      type: 'roulette',
-      title: 'Caçador de Recompensas: Obtenha precisão acima de 85% em uma bateria intercalada de 10 questões.',
-      desc: 'Mantenha o flow de acertos.',
-      target: 10,
-      reward: 100,
-      rewardType: 'chest',
-      progress: 0,
-      completed: false
+      topicId: mission.topicId
     });
   }
+
+  // Quest 3: Dopamine Roulette (Keep high precision)
+  quests.push({
+    id: 'dopamine-roulette',
+    type: 'roulette',
+    title: 'Caçador de Recompensas: Obtenha precisão acima de 80% nas baterias.',
+    desc: 'Mantenha o foco absoluto estilo FGV.',
+    target: 5,
+    reward: 100,
+    rewardType: 'chest',
+    progress: 0,
+    completed: false
+  });
 
   return {
     quests,
@@ -2064,46 +2450,64 @@ export async function runGeneratorEngine(topicId, missionType) {
   if (!topic) throw new Error('Tópico não encontrado');
   
   const subject = await db.get('SELECT * FROM Disciplinas WHERE id_disciplina = ?', [topic.id_disciplina]);
-  const banca = subject.banca || 'Geral';
+  const banca = 'FGV'; // Strict FGV
   const mastery = topic.percentual_dominio || 0;
   
+  const profileId = await getActiveProfileId();
+  const profile = await getProfile();
+
+  let daysUntilExam = 90;
+  if (profile && profile.exam_date) {
+    const diff = new Date(profile.exam_date) - new Date();
+    const diffDays = Math.ceil(diff / (1000 * 60 * 60 * 24));
+    if (diffDays > 0) daysUntilExam = diffDays;
+  }
+
+  const masteryRow = await db.get('SELECT * FROM TopicMastery WHERE profile_id = ? AND topic_id = ?', [profileId, topicId]);
+  const confidence = masteryRow ? (masteryRow.confidence || 50) : 50;
+
   // 1. Error history: last 3 errors
   const failedLogs = await db.all(
     `SELECT q.question_text, q.correct_answer 
      FROM Log_Questoes l
      JOIN questions q ON l.question_id = q.id
-     WHERE l.id_topico = ? AND l.acertou = 0
+     WHERE l.id_topico = ? AND l.acertou = 0 AND l.profile_id = ?
      ORDER BY l.answered_at DESC LIMIT 3`,
-    [topicId]
+    [topicId, profileId]
   );
   const errorsContext = failedLogs.map(f => `Questão: "${f.question_text}" | Resposta Correta: "${f.correct_answer}"`).join('\n');
   
-  // 2. Difficulty scaler based on recent response speed (for correct answers in the last 5 logs)
-  const speedStats = await db.get(
-    `SELECT AVG(tempo_resposta_segundos) as avg_time 
-     FROM Log_Questoes 
-     WHERE id_topico = ? AND acertou = 1 
-     ORDER BY answered_at DESC LIMIT 5`,
-    [topicId]
+  // 2. Fetch imported few-shot examples from database
+  const examExamples = await db.all(
+    `SELECT q.question_text, q.options, q.correct_answer, q.explanation
+     FROM questions q
+     JOIN Topicos t ON q.topic_id = t.id_topico
+     WHERE q.source = 'imported' AND t.id_disciplina = ?
+     LIMIT 3`,
+    [topic.id_disciplina]
   );
   
-  let difficulty = 'Medium';
-  if (missionType === 'boss_fight') {
-    difficulty = 'Hard';
-  } else if (mastery < 50) {
-    difficulty = 'Easy';
-  } else if (mastery >= 80 || (speedStats && speedStats.avg_time !== null && speedStats.avg_time < 20)) {
-    difficulty = 'Hard';
+  let examplesText = '';
+  if (examExamples.length > 0) {
+    examplesText = examExamples.map(ex => {
+      let opts = [];
+      try { opts = JSON.parse(ex.options); } catch(e) { opts = ex.options; }
+      return `Questão: "${ex.question_text}"\nOpções: ${JSON.stringify(opts)}\nGabarito: "${ex.correct_answer}"\nExplicação: "${ex.explanation}"`;
+    }).join('\n\n');
   }
-  
-  // 3. AI call with ValidateTask & AdaptiveFeedback prompt constraints
-  const questionsList = await generateAdaptiveQuestions(
+
+  // 3. AI call using modified generateNewQuestions with all adaptive parameters
+  const questionsList = await generateNewQuestions(
     subject.nome,
     topic.nome,
     topic.summary || 'Conteúdo geral do edital.',
-    banca,
-    difficulty,
-    errorsContext
+    0, // existingCount
+    mastery,
+    confidence,
+    daysUntilExam,
+    examplesText || null,
+    errorsContext || null,
+    subject.peso_edital || 1.0
   );
   
   // 4. Just-in-Time db insertion with source 'AI_ON_DEMAND'
@@ -2113,17 +2517,17 @@ export async function runGeneratorEngine(topicId, missionType) {
        VALUES (?, ?, ?, ?, ?, ?, 'AI_ON_DEMAND')`,
       [
         topicId,
-        q.question,
+        q.question || q.question_text,
         JSON.stringify(q.options),
         q.correct_answer,
         q.explanation,
-        q.difficulty || difficulty
+        q.difficulty || 'Medium'
       ]
     );
   }
   
-  console.log(`GeneratorEngine: Generated and inserted 5 adaptive questions for topic ID ${topicId} (${difficulty})`);
-  return { success: true, count: questionsList.length, difficulty };
+  console.log(`GeneratorEngine: Generated and inserted ${questionsList.length} FGV-style questions for topic ID ${topicId}`);
+  return { success: true, count: questionsList.length, difficulty: 'Adaptive' };
 }
 
 export function runGeneratorEngineInBackground(topicId, missionType) {
